@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "marine-bios-extract"
+version = "0.1.0"
+description = "Extract CDFW BIOS and companion marine GIS layers for any bounding box"
+readme = "README.md"
+requires-python = ">=3.11"
+
+# HTTP is stdlib urllib.request, matching kelp-density-extract - no requests.
+# The vector stack is the one unavoidable addition: rasterio exposes GDAL's
+# raster API only, not OGR, and there is no GDAL CLI on this machine. pyogrio
+# reads Shapefile and OpenFileGDB and supports a read-time bbox filter, so a
+# 150 MB statewide archive never has to land in memory whole.
+dependencies = [
+    "numpy>=1.26",
+    "pandas>=2.0",
+    "pyproj>=3.6",
+    "rasterio>=1.3",
+    "pyogrio>=0.8",
+    "shapely>=2.0",
+]
+
+[project.scripts]
+bios = "biosextract.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

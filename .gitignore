@@ -1,0 +1,35 @@
+# Environments
+.venv/
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Source data and caches - large, re-downloadable, licensed upstream
+data/
+.cache/
+*.zip
+*.gdb/
+
+# Generated output - must be reproducible from a command
+output/
+out/
+*.tif
+*.tiff
+*.kmz
+*.kml
+*.geojson
+*.gpkg
+*.csv
+*.shp
+*.shx
+*.dbf
+*.prj
+*.cpg
+
+# Keep example/config files that would otherwise match the patterns above
+!config.example.toml
+!examples/**
+!tests/data/**
