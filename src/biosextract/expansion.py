@@ -226,6 +226,10 @@ class Group:
     bounds: tuple[float, float, float, float]  # w, s, e, n in degrees
     width_km: float
     height_km: float
+    #: Set only on a refusal: how far each side would have had to travel from
+    #: the box the padding produced. "Too big" is not actionable; "it wanted
+    #: 4.4 km west and you gave it 2" is.
+    needed_km: dict[str, float] | None = None
 
     def label(self) -> str:
         shown = self.names[:NAMES_SHOWN]
@@ -235,12 +239,32 @@ class Group:
         return text
 
     def as_dict(self) -> dict:
-        return {
+        out = {
             "layer": self.layer,
             "features": len(self.indices),
             "names": self.names[:NAMES_SHOWN],
             "size_km": [round(self.width_km, 2), round(self.height_km, 2)],
         }
+        if self.needed_km is not None:
+            out["needed_km"] = {s: round(km, 2) for s, km in self.needed_km.items()}
+        return out
+
+    def shortfall(self, budget: Budget) -> str:
+        """The sides that were not big enough, and by how much. For a person."""
+        if not self.needed_km:
+            return ""
+        allowed = {
+            "north": budget.north_km,
+            "south": budget.south_km,
+            "east": budget.east_km,
+            "west": budget.west_km,
+        }
+        short = [
+            f"{km:.1f} km {side} against a budget of {allowed[side]:g} km"
+            for side, km in self.needed_km.items()
+            if km > allowed[side] + 1e-9
+        ]
+        return "; ".join(short)
 
 
 @dataclass
@@ -277,7 +301,13 @@ class Expansion:
             "rounds_exhausted": self.rounds_exhausted,
             "captured": [g.as_dict() for g in self.captured],
             "refused": [
-                dict(g.as_dict(), reason="larger than the budget for at least one side")
+                dict(
+                    g.as_dict(),
+                    reason=(
+                        "larger than the budget allows: needed "
+                        + (g.shortfall(self.budget) or "more than the budget on some side")
+                    ),
+                )
                 for g in self.refused
             ],
             "still_cut": dict(self.still_cut),
@@ -348,6 +378,12 @@ def expand(
                 group = _group_of(layer, indices, current)
                 target = _with_margin(group.bounds, current, margin_km)
                 if not _fits(target, limit):
+                    # Measured from the box the padding produced, so the number
+                    # is directly comparable to the budget the caller chose.
+                    group.needed_km = {
+                        side: max(0.0, km)
+                        for side, km in box.growth_km(BBox(*target)).items()
+                    }
                     result.refused.append(group)
                     settled.add(token)
                     continue
@@ -628,6 +664,9 @@ def _announce(result: Expansion, unread: dict[str, str]) -> None:
                 group.height_km,
             )
         )
+        shortfall = group.shortfall(result.budget)
+        if shortfall:
+            print(f"                   it needed {shortfall}")
     still = {k: v for k, v in result.still_cut.items() if v}
     if still:
         print(

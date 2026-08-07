@@ -111,8 +111,28 @@ def test_the_refusal_says_what_it_is_and_how_big(shapefile):
     assert report["refused"][0]["features"] == 2
     assert report["refused"][0]["names"][0] == "South La Jolla SMR"
     assert report["refused"][0]["size_km"][0] == pytest.approx(3.7, abs=0.2)
-    assert "budget" in report["refused"][0]["reason"]
     assert report["budget_km"]["east_km"] == 1.0
+    # "Too big" is not actionable. What it would have needed is.
+    assert report["refused"][0]["needed_km"]["east"] == pytest.approx(3.3, abs=0.2)
+    assert "needed 3.3 km east against a budget of 1 km" in report["refused"][0]["reason"]
+
+
+def test_a_refusal_names_only_the_sides_that_were_short(shapefile):
+    """Nothing north or south is in the way; saying so would be noise."""
+    budget = expansion.Budget(north_km=10.0, south_km=10.0, east_km=1.0, west_km=10.0)
+
+    result = expansion.expand(BOX, [read(shapefile, budget)], budget)
+
+    shortfall = result.refused[0].shortfall(budget)
+    assert "east" in shortfall
+    assert "north" not in shortfall and "west" not in shortfall
+
+
+def test_a_captured_group_carries_no_shortfall(shapefile):
+    report = run(shapefile, 5.0).as_dict()
+
+    assert report["captured"]
+    assert all("needed_km" not in group for group in report["captured"])
 
 
 def test_each_side_is_capped_by_the_padding_chosen_for_that_side(shapefile):
@@ -382,3 +402,6 @@ def test_canary_a_budget_too_small_declines_and_says_how_big_the_pair_is():
     refused = [g for g in result.refused if "South La Jolla SMR" in g.names]
     assert len(refused) == 1
     assert refused[0].width_km == pytest.approx(7.8, abs=0.3)
+    # And what it would have taken, in the units the caller chose it in.
+    assert refused[0].needed_km["west"] == pytest.approx(4.4, abs=0.3)
+    assert "against a budget of 2 km" in refused[0].shortfall(budget)
