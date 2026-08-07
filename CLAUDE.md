@@ -112,6 +112,12 @@ directly to `main`, except where §1.10 allows it.
 - Do not start an issue whose blocker has not merged. The blocker's code is the
   ground the slices stand on, and rebasing half-finished work onto a moved
   blocker is how a verified slice quietly stops being verified.
+- **Told to start one anyway? Say so, then stack.** Cut the branch from the
+  *blocker's branch*, not from `main`, and open the PR against the blocker's
+  branch so the diff is your slice alone. State in the PR body that it is
+  stacked, on what, and that the blocker merges first. Cutting from `main`
+  instead produces a PR carrying the blocker's commits as well — unreviewable,
+  and it merges the blocker twice.
 
 ### 1.7 Implement one slice, verify it, commit it
 
@@ -159,6 +165,25 @@ On confirmation:
 
 If changes are requested instead, keep working on the same branch — new slices,
 new commits, same rules. Do not rewrite history that has already been pushed.
+
+**Merging a stack: retarget the upper PR before merging the lower one.**
+Deleting a branch on merge closes any PR still pointing at it — GitHub does not
+reliably retarget — and a closed PR can be neither reopened nor retargeted while
+its base branch is missing. Recovering means pushing the deleted ref back,
+reopening, retargeting and only then merging. Doing it in the right order costs
+nothing — it is the same commands, with the retarget moved to the front:
+
+```powershell
+gh pr edit <upper> --base main
+gh pr merge <lower> --merge --delete-branch
+# merge main into the upper branch, re-run the gates, then:
+gh pr merge <upper> --merge --delete-branch
+```
+
+**Re-run `.\run-tests.ps1` on the upper branch merged with the new `main`
+before merging it.** Its green run was against the tree before the blocker
+landed, and that is not the tree it is about to join. Quote the re-run, not the
+original, as the gate output for the merge.
 
 ### 1.9 Report honestly
 
