@@ -522,6 +522,76 @@ def test_a_raster_and_a_vector_share_one_box(studies_root, cache_dir, mpa_archiv
 
 
 # --------------------------------------------------------------------------
+# resolving the archives
+# --------------------------------------------------------------------------
+
+
+def test_each_dataset_is_resolved_exactly_once(studies_root, cache_dir, mpa_archive, monkeypatch):
+    """`bios network` states one directory listing and one HEAD per dataset.
+
+    Resolution moved ahead of the box seam so a stage there can read a layer
+    without paying for it a second time; that only holds if nothing downstream
+    resolves again.
+    """
+    from biosextract import catalog
+
+    from biosextract import fetch as fetch_mod
+
+    resolved: list[str] = []
+    fetched: list[str] = []
+
+    def fake_resolve(dataset, **kw):
+        resolved.append(dataset.key)
+        return catalog.ResolvedSource(dataset=dataset, url=f"local:{mpa_archive}", bytes=None)
+
+    def fake_fetch(src, cache_dir, **kw):
+        fetched.append(src.dataset.key)
+        return fetch_mod.adopt_local(src, mpa_archive, cache_dir, verbose=False)
+
+    monkeypatch.setattr(catalog, "resolve", fake_resolve)
+    monkeypatch.setattr(studyrun.fetch_mod, "fetch", fake_fetch)
+
+    # A stage at the box seam that has to read the layer, which is exactly what
+    # the expansion rule does.
+    def reader(state):
+        studyrun.acquire(state, catalog.get("mpa"), verbose=False)
+        return state, {"read": True}
+
+    studyrun.register_box_stage("reader", reader)
+
+    argv = study_argv(studies_root, cache_dir, mpa_archive)
+    argv.remove("--local-archive")
+    argv.remove(f"mpa={mpa_archive}")
+    assert main(argv) == 0
+
+    assert resolved == ["mpa"]
+    assert fetched == ["mpa"]
+
+
+def test_a_dataset_that_cannot_be_resolved_is_reported_by_the_plan(
+    studies_root, cache_dir, mpa_archive, monkeypatch, capsys
+):
+    """The refusal stays where a person reads it, not in the silent stage."""
+    from biosextract import catalog
+
+    def boom(dataset, **kw):
+        raise catalog.CatalogError(f"{dataset.key} is not in the bucket")
+
+    monkeypatch.setattr(catalog, "resolve", boom)
+    argv = study_argv(studies_root, cache_dir, mpa_archive)
+    argv[argv.index("mpa", argv.index("--datasets"))] = "shoreline"
+    argv.remove("--local-archive")
+    argv.remove(f"mpa={mpa_archive}")
+
+    code = main(argv)
+
+    assert code == 2
+    printed = capsys.readouterr()
+    assert "shoreline            UNAVAILABLE" in printed.out
+    assert "--keep-going" in printed.err
+
+
+# --------------------------------------------------------------------------
 # the two extension points
 # --------------------------------------------------------------------------
 
