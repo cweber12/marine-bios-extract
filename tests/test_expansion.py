@@ -7,6 +7,8 @@ assumed. Nothing in this file reaches the network or the run.
 
 from __future__ import annotations
 
+import pathlib
+
 import pytest
 
 from biosextract import expansion
@@ -286,3 +288,97 @@ def test_a_layer_with_no_crs_is_refused_rather_than_guessed(tmp_path):
         expansion.read_window(
             str(shp), expansion.window(BOX, expansion.Budget.uniform(5.0)), "mpa"
         )
+
+
+# --------------------------------------------------------------------------
+# the canary: real published bytes, not a synthetic pair
+# --------------------------------------------------------------------------
+#
+# Everything above builds its own geometry, which means it verifies the rule
+# and not the data. The failure this feature exists to remove is a fact about
+# what CDFW actually publishes, so one test asserts it against the real archive.
+# It skips rather than fails when the cache is cold: a fresh clone has no
+# .cache/, and a test that cannot run must not look like one that did.
+
+REAL_MPA = pathlib.Path(__file__).resolve().parent.parent / ".cache" / "mpa" / "ds582.zip"
+REAL_MPA_LAYER = f"/vsizip/{REAL_MPA.as_posix()}/ds582.gdb"
+
+#: A box drawn deliberately tight around South La Jolla SMR: it cuts the reserve
+#: on every side, and its touching partner South La Jolla SMCA - which runs from
+#: -117.34213 to the shared meridian at -117.31667 - is wholly outside it.
+TIGHT = BBox.parse("-117.30,32.80,-117.26,32.82")
+
+real_archive = pytest.mark.skipif(
+    not REAL_MPA.is_file(),
+    reason=f"{REAL_MPA} is not cached; run `bios resolve mpa` and extract once",
+)
+
+
+@real_archive
+def test_canary_a_tight_box_pulls_in_the_touching_partner():
+    budget = expansion.Budget.uniform(6.0)
+    layer = expansion.read_window(
+        REAL_MPA_LAYER, expansion.window(TIGHT, budget), key="mpa"
+    )
+
+    result = expansion.expand(TIGHT, [layer], budget)
+
+    captured = [name for group in result.captured for name in group.names]
+    assert "South La Jolla SMR" in captured
+    assert "South La Jolla SMCA" in captured
+    # The partner's offshore edge, plus the margin, now inside the box.
+    assert result.box.west < -117.34213
+    assert result.still_cut["mpa"] == 0
+
+
+@real_archive
+def test_canary_without_the_rule_the_partner_is_simply_absent():
+    """The state of the world before this feature: half a management unit."""
+    from shapely.geometry import box as shp_box
+
+    layer = expansion.read_window(
+        REAL_MPA_LAYER, BBox.parse("-117.40,32.70,-117.20,32.90"), key="mpa"
+    )
+    poly = shp_box(*TIGHT.as_tuple())
+    survives = [
+        name
+        for name, geom in zip(layer.names, layer.geometries)
+        if not geom.intersection(poly).is_empty
+    ]
+
+    assert "South La Jolla SMR" in survives
+    assert "South La Jolla SMCA" not in survives
+
+
+@real_archive
+def test_canary_the_published_pair_really_does_touch():
+    """The whole rule rests on this, and no tolerance is applied to make it true."""
+    layer = expansion.read_window(
+        REAL_MPA_LAYER, BBox.parse("-117.40,32.70,-117.20,32.90"), key="mpa"
+    )
+    index = {name: i for i, name in enumerate(layer.names)}
+    smr = layer.geometries[index["South La Jolla SMR"]]
+    smca = layer.geometries[index["South La Jolla SMCA"]]
+
+    assert smr.intersects(smca)
+    groups = {
+        frozenset(layer.names[i] for i in group)
+        for group in expansion.clusters(layer.geometries)
+    }
+    assert frozenset({"South La Jolla SMR", "South La Jolla SMCA"}) in groups
+
+
+@real_archive
+def test_canary_a_budget_too_small_declines_and_says_how_big_the_pair_is():
+    budget = expansion.Budget.uniform(2.0)
+    layer = expansion.read_window(
+        REAL_MPA_LAYER, expansion.window(TIGHT, budget), key="mpa"
+    )
+
+    result = expansion.expand(TIGHT, [layer], budget)
+
+    assert result.moved is False
+    assert result.still_cut["mpa"] == 1
+    refused = [g for g in result.refused if "South La Jolla SMR" in g.names]
+    assert len(refused) == 1
+    assert refused[0].width_km == pytest.approx(7.8, abs=0.3)
