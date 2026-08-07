@@ -1,0 +1,40 @@
+# Line endings.
+#
+# These files were authored on Linux (LF) and are edited on Windows (CRLF).
+# Without this file, every `git add` prints "LF will be replaced by CRLF",
+# which is noise at best and, under a PowerShell script with
+# $ErrorActionPreference = 'Stop', enough to abort the run.
+#
+# Text is normalised to LF in the repository. Git still checks out whatever
+# your core.autocrlf setting asks for, so nothing about your editor changes.
+
+* text=auto eol=lf
+
+# PowerShell scripts stay LF like everything else. Windows PowerShell 5.1 and
+# PowerShell 7 both run LF-only scripts without complaint, and forcing CRLF here
+# only reproduces the "LF will be replaced by CRLF" warning this file exists to
+# remove. Batch files are the exception: cmd.exe genuinely needs CRLF.
+*.ps1  text eol=lf
+*.psm1 text eol=lf
+*.cmd  text eol=crlf
+*.bat  text eol=crlf
+
+# Explicitly text, so a stray heuristic never treats them as binary.
+*.py    text
+*.toml  text
+*.md    text
+*.json  text
+*.xml   text
+*.cfg   text
+
+# Never touch these - line-ending conversion corrupts them.
+*.zip  binary
+*.tif  binary
+*.tiff binary
+*.gpkg binary
+*.kmz  binary
+*.shp  binary
+*.shx  binary
+*.dbf  binary
+*.png  binary
+*.pdf  binary
