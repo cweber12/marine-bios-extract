@@ -13,6 +13,7 @@
     .\run.ps1 --help
     .\run.ps1 list
     .\run.ps1 extract --bbox '-117.40,32.76,-117.15,32.95' --datasets mpa,shoreline
+    .\run.ps1 study --study latest --pad-km 10 --datasets mpa,shoreline --yes
 
 .NOTES
     Quote comma-separated values. PowerShell parses a bare

@@ -14,6 +14,61 @@ every run writes a provenance manifest.
 .\run.ps1 extract --bbox '-117.30,32.80,-117.24,32.88' --datasets mpa shoreline
 ```
 
+If the area you want is a **study** in the shared `..\studies` directory, you do
+not have to type a rectangle at all — see below.
+
+## Extracting for a study
+
+`station-data-extract` and `cudem-extract` both work from `..\studies\<id>\`,
+and so does this toolkit. `study` builds the box out of the study's own station
+positions and writes into the study folder:
+
+```powershell
+.\run.ps1 study --study latest --pad-km 10 --datasets mpa shoreline --yes
+```
+
+That reads `study.json`, takes the tightest rectangle around every station that
+has a position, pads it by 10 km on each side, and writes the layers to
+`<study>\marine-bios\` with a manifest and an `ATTRIBUTION.txt`. It then appends
+one entry to `study.json`'s `producers` list and touches nothing else in that
+file.
+
+Some details worth knowing:
+
+- **The study can be named four ways** — its id, its label, any unique fragment
+  of either, or `latest`. A fragment matching more than one study is an error
+  listing them, never a silent pick of the newest.
+- **Padding is required and has no default.** A margin is a statement about the
+  study area, and this repo does not bake study areas into code. `--pad-km`
+  sets every side; `--pad-north-km`, `--pad-south-km`, `--pad-east-km` and
+  `--pad-west-km` override individual ones, so you can reach 20 km offshore
+  without dragging the box 20 km inland.
+- **Padding is kilometres, converted per axis** at the envelope's centre
+  latitude. A degree of longitude at 32.87 N is about 16% shorter than a degree
+  of latitude, so padding in degrees would quietly give you a narrower box than
+  you asked for. Miles are not offered: the registry holds a *nautical* mile
+  limit layer and an ambiguous "mile" in a marine repo is a defect waiting to
+  happen.
+- **Every station with a position shapes the box, regardless of role.** Stations
+  without coordinates are excluded, named on the console, and recorded in the
+  producer entry with the reason — in the reference study that is the subject
+  buoy itself, which is exactly the fact a run must not bury.
+- **A layer with nothing in the box is still written**, with a recorded count of
+  zero. "No saline wetlands within 10 km" is a result worth reading, not a file
+  you never notice is missing.
+- **Downloads are cached in this repository**, not per study, so seven studies
+  of the same coastline do not cost seven copies of a 151 MB archive.
+- **`--dry-run`** resolves and prints the box and the plan without writing
+  anything; **`--yes`** skips the confirmation. Without a terminal and without
+  `--yes` the command stops and says which flag it needed, rather than blocking
+  on a prompt nobody can see. It writes no escape sequences, so a redirected log
+  stays readable.
+- **`--force`** removes files already in `marine-bios\` that this run does not
+  write. Without it they are listed and left alone.
+
+`extract` is unchanged and remains the way to work from a rectangle you name
+yourself.
+
 ## Why it downloads whole files instead of querying ArcGIS
 
 The CDFW Marine Viewer is an Esri web app, and it is tempting to pull its layers
@@ -219,10 +274,13 @@ not fall back to their open REST service as a way around the form.
 
 ## Reproducibility
 
-Every run writes `<prefix>_manifest.json`: the box, the dataset list, the
-resolved URL and sha256 of each source archive, its `Last-Modified`, the CRS
+Every run writes a manifest — `<prefix>_manifest.json` from `extract`, plain
+`manifest.json` from `study`: the box, the dataset list, the resolved URL and
+sha256 of each source archive, its `Last-Modified` and `Content-Length`, the CRS
 chain, how many features were selected and how many were cut, and the size and
-hash of every file written.
+hash of every file written. A `study` run additionally records the study, the
+station envelope, the four padding values and the stations it had to skip, so
+the box can be rebuilt from the study alone.
 
 BIOS archives carry no version number in their URL, so that hash *is* the
 version. When a cached archive no longer matches what the publisher is serving,
