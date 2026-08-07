@@ -1,0 +1,55 @@
+# Example configuration. Nothing here is a default in the code - copy this file,
+# edit it for your study area, and pass it with --config.
+#
+#     .\run.ps1 extract --config my-area.toml
+#
+# Any value can still be overridden on the command line, and the command line
+# always wins.
+
+[area]
+# west,south,east,north in degrees. Longitudes west of Greenwich are negative,
+# so in California both of them are.
+bbox = "-117.30,32.80,-117.24,32.88"
+
+# Alternatively, build the box around a point instead of listing edges:
+# center = "32.8523,-117.26935"
+# radius_km = 5
+
+[extract]
+# Which layers to pull. Omit to take every dataset that can be fetched without
+# a human in the loop - run `.\run.ps1 list` to see what that covers.
+datasets = ["mpa", "shoreline", "benthic-substrate", "saline-wetlands"]
+
+# false cuts geometries exactly at the box, which is usually what "the data for
+# this area" means. true keeps any feature that touches the box intact, so you
+# get a whole MPA rather than the corner of one - useful when you care about the
+# feature as a unit, but the output then extends past your rectangle.
+whole_features = false
+
+# Output CRS for the vector layers. EPSG:4326 is the default and the only CRS
+# GeoJSON permits. Areas and lengths are always measured in the UTM zone of the
+# box centroid regardless of this setting, and reported as area_m2 / length_m.
+# crs = "EPSG:4326"
+
+# Raster cell size in metres, for kelp-persistence. Omit to keep the source
+# resolution - 5 m for ds3151. Going finer invents detail that is not there.
+# resolution = 5.0
+
+# Refuse any single archive above this. The BIOS library holds statewide files
+# well over 100 MB and "extract everything" is an easy way to pull several
+# gigabytes by accident.
+max_download_mb = 512
+
+[output]
+dir = "output"
+prefix = "lajolla"
+
+# geojson  portable, WGS84 only, loses attribute types
+# csv      attributes plus WKT and an inside-the-polygon representative point
+# gpkg     preserves full field names and types - the best archival choice
+# kmz      Google Earth viewing only, never analysis
+# shp      compatibility with older tooling; truncates field names to 10 chars
+formats = "geojson,csv,gpkg"
+
+[network]
+cache_dir = ".cache"
