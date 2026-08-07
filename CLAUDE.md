@@ -5,25 +5,183 @@
 BIOS marine layers and their companion datasets.
 **Audience:** a CLI coding agent working directly in this repo.
 
-This file follows the same shape as `kelp-density-extract\CLAUDE.md`. Where the
-two differ, the difference is deliberate and explained.
+This file follows the same shape as `kelp-density-extract\CLAUDE.md`, with one
+deliberate exception: §1 is the workflow from `station-data-extract\CLAUDE.md`,
+because a plan that lives only in a transcript dies with the session. Where any
+of the three differ, the difference is deliberate and explained.
 
 ---
 
-## 1. Workflow — follow this for every prompt
+## 1. Workflow — confirm, plan, PRD, branch, slice, PR
 
-Identical to the sibling repos, and not optional.
+Follow this for any task beyond a one-line fix. It is not optional, and the
+steps do not collapse into a single reply.
 
-1. **Read back your understanding.** Proportional to the ask. Say explicitly
-   what you are *not* going to do when scope is ambiguous.
-2. **Offer suggestions when warranted** — a better approach, a hidden cost, a
-   correctness risk — *before* implementing. Say nothing if you have nothing.
-3. **Wait for confirmation.** Exception: explicit authorization in the prompt
-   ("go ahead", "do it") is confirmation for the scope described.
-4. **Plan and slice.** Vertical slices, each standing on its own, each with a
-   stated acceptance check. Number them and present the list first.
-5. **Implement one slice at a time, commit after each.** Run the suite before
-   every commit; never commit red. The commit history *is* the change record.
+### 1.1 Confirm understanding before doing anything
+
+Say back what you think is being asked, in your own words, including anything
+ambiguous and how you intend to read it. Keep it proportional — a line or two
+for a small ask. If two readings would lead to materially different work, ask;
+do not pick one silently.
+
+Say what you think is *out* of scope. Most misunderstandings in this family have
+been about scope, not intent.
+
+Offer suggestions when warranted — a better approach, a hidden cost, a
+correctness risk — *before* implementing. Say nothing if you have nothing;
+manufactured suggestions train the owner to skim past the ones that matter.
+
+### 1.2 Produce a plan in logical slices
+
+A slice is a change that:
+
+- does one thing you can name in a short sentence,
+- leaves the repo working and `.\run-tests.ps1` green,
+- can be committed on its own and understood from its commit message alone.
+
+Rename, refactor, bugfix and new feature are **separate slices**, even when they
+touch the same file. If a slice cannot be described without the word "and", it
+is probably two slices.
+
+State the slices in order, numbered, with the dependencies between them and an
+acceptance check for each. Estimate nothing; just make the order defensible.
+
+### 1.3 Confirm the plan
+
+Present the slice list and wait for agreement before implementing. Explicit
+authorization in the prompt ("go ahead", "do it") is agreement for the scope
+described, and only that scope. If the plan changes mid-flight — and it will,
+because verification surfaces real bugs — say so and re-confirm rather than
+quietly expanding scope.
+
+### 1.4 Open a PRD
+
+Once the slice list is agreed, write it up as a PRD and publish it to the issue
+tracker (`cweber12/marine-bios-extract`) with the `ready-for-agent` label. Do
+this *before* starting slice 1.
+
+The conversation that produced the plan is not durable. The issue is, and it is
+the only thing another agent — or you in a fresh session — can pick the work up
+from. A plan that exists solely in a transcript has to be rebuilt from scratch
+every time someone returns to it, and it gets rebuilt slightly differently each
+time.
+
+The PRD states the problem and the solution *from the user's point of view*, the
+user stories, the implementation decisions, the **test seams**, and what is out
+of scope. Say what was considered and rejected, and why — the rejected options
+are most of what makes the accepted one defensible, and they are the first thing
+someone re-litigates otherwise.
+
+Agree the seams before publishing; they decide whether the feature can be
+verified at all. Prefer existing seams to new ones — here they are the dataset
+registry, the resolver, the clip functions and the writers, each reachable
+without the network. Something that can only be exercised by a live download is
+not a seam: see the `network` marker excluded by default in `run-tests.ps1`.
+
+### 1.5 Split the PRD into issues, when that earns its keep
+
+Break the PRD into issues — one per **vertical** slice, each cutting a complete
+path through resolve → download → clip → write, rather than one layer across the
+whole feature. A slice that delivers only a registry entry, or only a writer,
+cannot be demonstrated and cannot be verified except by the slice that finally
+uses it.
+
+Publish in dependency order so each issue can name a real blocker. Label them
+`ready-for-agent` and point each at the PRD as its parent. **Never close or edit
+the PRD issue itself** — it is the record of what was decided, not a checklist.
+
+Mark each issue AFK if it can be implemented and merged without a human, or HITL
+if it needs a decision or a look at the artifact. Prefer AFK. A slice whose whole
+purpose is that a number or a map reads correctly *to a person* is HITL, because
+no gate can assert it.
+
+**Skip this step when it does not earn its keep.** One slice is one issue is
+overhead, and a PRD small enough to finish on one branch is better worked from
+the PRD. The test is whether two agents could pick up two of the issues without
+colliding. If not, splitting bought nothing.
+
+### 1.6 Branch per issue
+
+Work every issue on its own branch, cut from an up-to-date `main`. Never commit
+directly to `main`, except where §1.10 allows it.
+
+- Name the branch after the issue: `issue-<number>-<short-slug>`. Work with no
+  issue behind it — see §1.10 — goes on `docs/<short-slug>`.
+- One issue per branch. Work that "was right there" belongs to a different
+  branch and a different issue, even when it is two lines.
+- Do not start an issue whose blocker has not merged. The blocker's code is the
+  ground the slices stand on, and rebasing half-finished work onto a moved
+  blocker is how a verified slice quietly stops being verified.
+
+### 1.7 Implement one slice, verify it, commit it
+
+**Commit after every slice.** Not at the end of the task, not once per session —
+after each slice. A clean working tree between slices is the point: it means any
+slice can be reverted or bisected on its own. The commit history *is* the change
+record.
+
+Before committing a slice:
+
+- run the gates in §2 — `.\run-tests.ps1`, plus a smoke run of the CLI if you
+  touched it. Never commit red,
+- confirm the working tree contains only that slice's changes,
+- write a message with a conventional prefix (§2) that says what changed and
+  *why*, not just what.
+
+Then move to the next slice. Do not batch commits.
+
+### 1.8 Push, open a PR, and wait
+
+When every slice in the issue is committed and its gates pass, push the branch
+and open a pull request. Then stop.
+
+The PR body states:
+
+- `Closes #<issue>`, so the tracker closes itself on merge,
+- what changed and why, at the level of the slices,
+- **the actual output of the gates you ran** — not "tests pass". A claim is not
+  evidence. If the change touches the network path, show `.\run-tests.ps1
+  -Network` as well; the default run excludes those tests, so a green default
+  says nothing about the publisher still being reachable,
+- anything you did not do, and why.
+
+Then **wait for confirmation to merge.** Do not merge your own PR unprompted, do
+not approve it, and do not bypass hooks or checks to make it mergeable. If a
+hook fails, the hook is the message.
+
+On confirmation:
+
+- merge with a **merge or rebase commit, never a squash**. Every slice is meant
+  to be revertible and bisectable on its own, and squashing a branch into a
+  single commit destroys the exact property §1.7 exists to create,
+- delete the remote branch, then the local branch,
+- return to `main` and pull, so the next issue starts from the merged state.
+
+If changes are requested instead, keep working on the same branch — new slices,
+new commits, same rules. Do not rewrite history that has already been pushed.
+
+### 1.9 Report honestly
+
+If a slice is blocked, say so and finish the others. If verification fails, show
+the output. If you found a bug in your own earlier work, say that plainly —
+catching it is worth more than looking tidy. A dataset that resolved but clipped
+to nothing is a finding to report, not a quiet zero.
+
+### 1.10 Documentation changes are routed by what they change
+
+Size is not the test; whether a rule moves is.
+
+| Change | Route |
+|---|---|
+| Typo, formatting, a dead link, clearer wording for a rule that already exists | Commit to `main` with a `docs:` prefix. No branch, no PR, no PRD |
+| Adding, removing or altering a rule — anything in §1, §4 or §5, or a new fact in §3 | Branch `docs/<slug>` and a PR. A PRD only if it spans more than one slice |
+| `README.md`, docstrings or `--help` text shipped alongside code | Part of that slice's commit, on that slice's branch. Not a separate route |
+
+A rule change earns a PR because the PR is the only place a person reads the new
+rule *before* it starts binding every future session, and the PR body is where
+*why* it changed survives — a `docs:` subject line will not carry it. A typo
+carries none of that cost, and routing typos through branches teaches everyone
+to skim the PR that mattered.
 
 ---
 
