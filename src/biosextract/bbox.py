@@ -192,12 +192,76 @@ class BBox:
             north=min(padded[3], 90.0),
         )
 
+    def grown(
+        self,
+        north_km: float = 0.0,
+        south_km: float = 0.0,
+        east_km: float = 0.0,
+        west_km: float = 0.0,
+    ) -> "BBox":
+        """This box with each side pushed outward by its own distance in km.
+
+        The same four-independent-sides arithmetic as :meth:`from_envelope`, on
+        a box that already exists. Growing an existing box is what the expansion
+        rule does - repeatedly - and doing it by hand at the call site would put
+        a second degrees-to-kilometres conversion in the repository, which is
+        precisely the sort of duplicate that ends up disagreeing.
+
+        Growth is never negative: this widens a box, it does not trim one.
+        """
+        pads = {"north": north_km, "south": south_km, "east": east_km, "west": west_km}
+        for side, value in pads.items():
+            if not math.isfinite(value):
+                raise BBoxError(f"{side} growth is not a finite number: {value!r}")
+            if value < 0:
+                raise BBoxError(
+                    f"{side} growth must not be negative, got {value} km. "
+                    "grown() widens a box; it never trims one."
+                )
+
+        km_lon, km_lat = self.km_per_degree
+        return BBox(
+            west=max(self.west - west_km / km_lon, -180.0),
+            south=max(self.south - south_km / km_lat, -90.0),
+            east=min(self.east + east_km / km_lon, 180.0),
+            north=min(self.north + north_km / km_lat, 90.0),
+        )
+
+    def growth_km(self, other: "BBox") -> dict[str, float]:
+        """How far each side of ``other`` lies outside this box, in kilometres.
+
+        Negative values are not clamped away: a side that moved *inward* is a
+        bug in whatever produced ``other``, and reporting it as zero would hide
+        exactly the case worth seeing.
+        """
+        km_lon, km_lat = self.km_per_degree
+        return {
+            "north": (other.north - self.north) * km_lat,
+            "south": (self.south - other.south) * km_lat,
+            "east": (other.east - self.east) * km_lon,
+            "west": (self.west - other.west) * km_lon,
+        }
+
     # ---- geometry -----------------------------------------------------
 
     @property
     def centroid(self) -> tuple[float, float]:
         """(lon, lat) of the box centre."""
         return ((self.west + self.east) / 2.0, (self.south + self.north) / 2.0)
+
+    @property
+    def km_per_degree(self) -> tuple[float, float]:
+        """(east-west, north-south) kilometres in one degree, at the box centre.
+
+        One conversion, used by every caller that has to turn a distance into a
+        span of degrees. A degree of longitude at 32.87 N is about 16% shorter
+        than a degree of latitude, so the two are never interchangeable.
+        """
+        _, lat = self.centroid
+        cos_lat = math.cos(math.radians(lat))
+        if abs(cos_lat) < 1e-9:
+            raise BBoxError("cannot measure kilometres per degree at a pole")
+        return (_KM_PER_DEG_LAT * cos_lat, _KM_PER_DEG_LAT)
 
     @property
     def width_km(self) -> float:

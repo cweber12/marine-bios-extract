@@ -215,3 +215,65 @@ def test_an_inside_out_envelope_is_refused():
             east_km=5.0,
             west_km=5.0,
         )
+
+
+# --------------------------------------------------------------------------
+# growing a box that already exists
+# --------------------------------------------------------------------------
+
+
+def test_grown_pushes_each_side_out_by_its_own_distance():
+    box = BBox.parse("-117.30,32.80,-117.24,32.88")
+
+    bigger = box.grown(north_km=1.0, south_km=2.0, east_km=3.0, west_km=4.0)
+
+    grew = box.growth_km(bigger)
+    assert grew["north"] == pytest.approx(1.0, abs=0.01)
+    assert grew["south"] == pytest.approx(2.0, abs=0.01)
+    assert grew["east"] == pytest.approx(3.0, abs=0.05)
+    assert grew["west"] == pytest.approx(4.0, abs=0.05)
+
+
+def test_growing_by_nothing_returns_the_same_rectangle():
+    box = BBox.parse("-117.30,32.80,-117.24,32.88")
+
+    assert box.grown().as_tuple() == box.as_tuple()
+
+
+def test_grown_agrees_with_padding_an_envelope():
+    """One conversion in the repository, not two that can drift apart."""
+    envelope = (-117.28, 32.84, -117.26, 32.86)
+
+    padded = BBox.from_envelope(
+        envelope, north_km=5.0, south_km=5.0, east_km=5.0, west_km=5.0
+    )
+    grown = BBox(*envelope).grown(
+        north_km=5.0, south_km=5.0, east_km=5.0, west_km=5.0
+    )
+
+    assert grown.as_tuple() == pytest.approx(padded.as_tuple(), abs=1e-9)
+
+
+def test_grown_refuses_to_trim():
+    box = BBox.parse("-117.30,32.80,-117.24,32.88")
+
+    with pytest.raises(BBoxError) as exc:
+        box.grown(east_km=-1.0)
+
+    assert "east growth must not be negative" in str(exc.value)
+
+
+def test_a_degree_of_longitude_is_shorter_than_a_degree_of_latitude():
+    """At 32.84 N by about 16%, which is why padding is never done in degrees."""
+    km_lon, km_lat = BBox.parse("-117.30,32.80,-117.24,32.88").km_per_degree
+
+    assert km_lat == pytest.approx(110.574)
+    assert km_lon == pytest.approx(92.9, abs=0.5)
+
+
+def test_growth_km_reports_a_side_that_moved_inward_rather_than_hiding_it():
+    box = BBox.parse("-117.30,32.80,-117.24,32.88")
+
+    shrunk = BBox(-117.29, 32.80, -117.24, 32.88)
+
+    assert box.growth_km(shrunk)["west"] < 0
