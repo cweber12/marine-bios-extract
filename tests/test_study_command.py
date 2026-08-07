@@ -20,7 +20,7 @@ import pytest
 
 from biosextract import studies, studyrun
 from biosextract.cli import main
-from tests.fixtures import make_archive, make_raster_archive
+from tests.fixtures import make_archive, make_cluster_archive, make_raster_archive
 from tests.test_studies import REFERENCE_STATIONS, write_study
 
 
@@ -135,7 +135,9 @@ def test_downloads_are_cached_in_the_repository_not_the_study(
 def test_the_manifest_pins_the_archive_and_records_the_box(
     studies_root, cache_dir, mpa_archive
 ):
-    main(study_argv(studies_root, cache_dir, mpa_archive))
+    # --no-expand so this test is about the padding and the pin, and not about
+    # the expansion rule that otherwise moves the box off the derived one.
+    main(study_argv(studies_root, cache_dir, mpa_archive, "--no-expand"))
     doc = read_manifest(studies_root)
 
     source = doc["layers"][0]["source"]
@@ -522,6 +524,399 @@ def test_a_raster_and_a_vector_share_one_box(studies_root, cache_dir, mpa_archiv
 
 
 # --------------------------------------------------------------------------
+# resolving the archives
+# --------------------------------------------------------------------------
+
+
+def test_each_dataset_is_resolved_exactly_once(studies_root, cache_dir, mpa_archive, monkeypatch):
+    """`bios network` states one directory listing and one HEAD per dataset.
+
+    Resolution moved ahead of the box seam so a stage there can read a layer
+    without paying for it a second time; that only holds if nothing downstream
+    resolves again.
+    """
+    from biosextract import catalog
+
+    from biosextract import fetch as fetch_mod
+
+    resolved: list[str] = []
+    fetched: list[str] = []
+
+    def fake_resolve(dataset, **kw):
+        resolved.append(dataset.key)
+        return catalog.ResolvedSource(dataset=dataset, url=f"local:{mpa_archive}", bytes=None)
+
+    def fake_fetch(src, cache_dir, **kw):
+        fetched.append(src.dataset.key)
+        return fetch_mod.adopt_local(src, mpa_archive, cache_dir, verbose=False)
+
+    monkeypatch.setattr(catalog, "resolve", fake_resolve)
+    monkeypatch.setattr(studyrun.fetch_mod, "fetch", fake_fetch)
+
+    # A stage at the box seam that has to read the layer, which is exactly what
+    # the expansion rule does.
+    def reader(state):
+        studyrun.acquire(state, catalog.get("mpa"), verbose=False)
+        return state, {"read": True}
+
+    studyrun.register_box_stage("reader", reader)
+
+    argv = study_argv(studies_root, cache_dir, mpa_archive)
+    argv.remove("--local-archive")
+    argv.remove(f"mpa={mpa_archive}")
+    assert main(argv) == 0
+
+    assert resolved == ["mpa"]
+    assert fetched == ["mpa"]
+
+
+def test_a_dataset_that_cannot_be_resolved_is_reported_by_the_plan(
+    studies_root, cache_dir, mpa_archive, monkeypatch, capsys
+):
+    """The refusal stays where a person reads it, not in the silent stage."""
+    from biosextract import catalog
+
+    def boom(dataset, **kw):
+        raise catalog.CatalogError(f"{dataset.key} is not in the bucket")
+
+    monkeypatch.setattr(catalog, "resolve", boom)
+    argv = study_argv(studies_root, cache_dir, mpa_archive)
+    argv[argv.index("mpa", argv.index("--datasets"))] = "shoreline"
+    argv.remove("--local-archive")
+    argv.remove(f"mpa={mpa_archive}")
+
+    code = main(argv)
+
+    assert code == 2
+    printed = capsys.readouterr()
+    assert "shoreline            UNAVAILABLE" in printed.out
+    assert "--keep-going" in printed.err
+
+
+# --------------------------------------------------------------------------
+# growing the box to whole feature groups
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture
+def cluster_archive(tmp_path):
+    """A cut reserve and its touching partner, the way ds582 ships them."""
+    return make_cluster_archive(tmp_path / "archives")
+
+
+def names_in(studies_root, layer="mpa"):
+    geojson = json.loads((out_dir(studies_root) / f"{layer}.geojson").read_text())
+    return sorted(f["properties"]["NAME"] for f in geojson["features"])
+
+
+def expansion_report(studies_root):
+    return read_manifest(studies_root)["request"]["stages"]["expansion"]
+
+
+def test_a_cut_reserve_pulls_its_touching_partner_into_the_extract(
+    studies_root, cache_dir, cluster_archive
+):
+    """The failure this whole feature exists to remove."""
+    main(
+        study_argv(
+            studies_root, cache_dir, cluster_archive, "--expand-budget-km", "5", pad="2"
+        )
+    )
+
+    # The partner arrives, and so does the straggler the grown box then reached -
+    # a second round, through the command rather than through the module.
+    assert names_in(studies_root) == [
+        "Second Round SMR",
+        "South La Jolla SMCA",
+        "South La Jolla SMR",
+    ]
+    assert expansion_report(studies_root)["rounds"] >= 2
+
+
+def test_without_expansion_the_partner_is_lost_entirely(
+    studies_root, cache_dir, cluster_archive
+):
+    """Half a management unit, and nothing in the file says so."""
+    main(study_argv(studies_root, cache_dir, cluster_archive, "--no-expand", pad="2"))
+
+    assert names_in(studies_root) == ["South La Jolla SMR"]
+    assert expansion_report(studies_root) == {
+        "applied": False,
+        "reason": "disabled by --no-expand",
+    }
+
+
+def test_no_expand_leaves_the_box_exactly_where_the_padding_put_it(
+    studies_root, cache_dir, cluster_archive
+):
+    main(study_argv(studies_root, cache_dir, cluster_archive, "--no-expand", pad="2"))
+    doc = read_manifest(studies_root)
+
+    assert doc["request"]["bbox"] == doc["request"]["stages"]["box"]["box_wsen"]
+
+
+def test_the_manifest_records_the_box_before_the_box_after_and_the_report(
+    studies_root, cache_dir, cluster_archive
+):
+    main(
+        study_argv(
+            studies_root, cache_dir, cluster_archive, "--expand-budget-km", "5", pad="2"
+        )
+    )
+    doc = read_manifest(studies_root)
+    report = doc["request"]["stages"]["expansion"]
+
+    derived = doc["request"]["stages"]["box"]["box_wsen"]
+    assert report["box_before_wsen"] == derived
+    assert report["box_after_wsen"] == doc["request"]["bbox"]
+    assert report["box_after_wsen"][2] > derived[2]  # it grew east
+    assert report["grew_km"]["east"] > 0
+    assert report["captured"][0]["layer"] == "mpa"
+    assert sorted(report["captured"][0]["names"]) == [
+        "South La Jolla SMCA",
+        "South La Jolla SMR",
+    ]
+    assert report["still_cut"] == {"mpa": 0}
+
+
+def test_the_producer_entry_carries_the_expansion_report(
+    studies_root, cache_dir, cluster_archive
+):
+    """A later slice draws this on a confirm screen; it has to be in the study."""
+    main(
+        study_argv(
+            studies_root, cache_dir, cluster_archive, "--expand-budget-km", "5", pad="2"
+        )
+    )
+    entry = our_producer(studies_root)
+
+    assert entry["bbox_wsen"] == entry["stages"]["expansion"]["box_after_wsen"]
+    assert entry["stages"]["expansion"]["moved"] is True
+
+
+def test_a_group_too_big_for_the_budget_is_left_cut_and_named(
+    studies_root, cache_dir, cluster_archive, capsys
+):
+    """2 km of padding does not buy a 3.7 km group, and the run says so."""
+    main(study_argv(studies_root, cache_dir, cluster_archive, pad="2"))
+
+    printed = capsys.readouterr().out
+    assert "REFUSED mpa: South La Jolla SMR, South La Jolla SMCA" in printed
+    assert "larger than the budget allows" in printed
+    assert "still cut at the boundary: mpa 1" in printed
+
+    report = expansion_report(studies_root)
+    assert report["refused"][0]["features"] == 2
+    assert report["refused"][0]["size_km"][0] == pytest.approx(3.7, abs=0.2)
+    assert report["still_cut"] == {"mpa": 1}
+    # The partner is still missing, which is the honest outcome, not a fudge.
+    assert names_in(studies_root) == ["South La Jolla SMR"]
+
+
+def test_a_feature_that_stays_cut_keeps_its_recomputed_geometry(
+    studies_root, cache_dir, cluster_archive
+):
+    """No acreage in the output may describe a polygon that no longer exists."""
+    main(study_argv(studies_root, cache_dir, cluster_archive, pad="2"))
+
+    geojson = json.loads((out_dir(studies_root) / "mpa.geojson").read_text())
+    props = geojson["features"][0]["properties"]
+    assert props["clipped"] is True
+    assert 0 < props["clip_fraction"] < 1
+    assert props["orig_Acres"] == 100.0
+    assert props["area_m2"] > 0
+
+
+def test_expand_budget_km_overrides_the_padding_as_the_budget(
+    studies_root, cache_dir, cluster_archive
+):
+    refused = main(
+        study_argv(studies_root, cache_dir, cluster_archive, pad="2", study="latest")
+    )
+    assert refused == 0
+    assert expansion_report(studies_root)["refused"]
+
+    main(
+        study_argv(
+            studies_root,
+            cache_dir,
+            cluster_archive,
+            "--expand-budget-km",
+            "5",
+            "--force",
+            pad="2",
+        )
+    )
+    report = expansion_report(studies_root)
+    assert report["refused"] == []
+    assert report["budget_km"] == {
+        "north_km": 5.0,
+        "south_km": 5.0,
+        "east_km": 5.0,
+        "west_km": 5.0,
+    }
+
+
+def test_each_side_keeps_its_own_budget(studies_root, cache_dir, cluster_archive):
+    """Two kilometres inland stays two kilometres inland."""
+    main(
+        study_argv(
+            studies_root,
+            cache_dir,
+            cluster_archive,
+            "--pad-west-km",
+            "0.5",
+            pad="2",
+        )
+    )
+
+    report = expansion_report(studies_root)
+    assert report["budget_km"]["west_km"] == 0.5
+    assert report["grew_km"]["west"] <= 0.5
+
+
+def test_a_raster_does_not_drive_expansion_but_gets_the_box_anyway(
+    studies_root, cache_dir, cluster_archive, tmp_path
+):
+    """Expansion is a property of the box, so the run still makes one rectangle."""
+    kelp = make_raster_archive(tmp_path / "archives")
+
+    code = main(
+        [
+            "study",
+            "--studies-root", str(studies_root),
+            "--study", "latest",
+            "--pad-km", "2",
+            "--expand-budget-km", "5",
+            "--datasets", "mpa", "kelp-persistence",
+            "--local-archive", f"mpa={cluster_archive}",
+            "--local-archive", f"kelp-persistence={kelp}",
+            "--cache-dir", str(cache_dir),
+            "--yes",
+        ]
+    )
+
+    assert code == 0
+    report = expansion_report(studies_root)
+    # The raster was never consulted; only the vector layer moved the box.
+    assert report["layers"] == ["mpa"]
+
+    doc = read_manifest(studies_root)
+    for layer in doc["layers"]:
+        assert layer["clip"].get("bbox", doc["request"]["bbox"])
+    geojson = json.loads((out_dir(studies_root) / "mpa.geojson").read_text())
+    assert geojson["clippedToBbox"] == doc["request"]["bbox"]
+
+
+def test_a_run_of_rasters_alone_declines_with_a_reason(
+    studies_root, cache_dir, tmp_path
+):
+    kelp = make_raster_archive(tmp_path / "archives")
+
+    code = main(
+        [
+            "study",
+            "--studies-root", str(studies_root),
+            "--study", "latest",
+            "--pad-km", "5",
+            "--datasets", "kelp-persistence",
+            "--local-archive", f"kelp-persistence={kelp}",
+            "--cache-dir", str(cache_dir),
+            "--yes",
+        ]
+    )
+
+    assert code == 0
+    assert expansion_report(studies_root) == {
+        "applied": False,
+        "reason": "no vector layer in this run; a raster has no feature groups",
+        "budget_km": {"north_km": 5.0, "south_km": 5.0, "east_km": 5.0, "west_km": 5.0},
+    }
+
+
+def test_expansion_does_not_turn_on_whole_features(
+    studies_root, cache_dir, cluster_archive
+):
+    """A property of the box and a property of the clip stay separate flags."""
+    main(
+        study_argv(
+            studies_root, cache_dir, cluster_archive, "--expand-budget-km", "5", pad="2"
+        )
+    )
+
+    doc = read_manifest(studies_root)
+    assert doc["request"]["whole_features"] is False
+    assert doc["layers"][0]["clip"]["whole_features"] is False
+
+
+def test_a_dry_run_says_it_downloaded_the_archives_it_needed(
+    studies_root, cache_dir, cluster_archive, capsys
+):
+    """"Nothing was downloaded" would be a small lie with 151 MB in the cache."""
+    code = main(study_argv(studies_root, cache_dir, cluster_archive, "--dry-run", pad="2"))
+
+    assert code == 0
+    printed = capsys.readouterr().out
+    assert "Dry run: nothing was written or recorded" in printed
+    assert "--no-expand skips that" in printed
+    assert not out_dir(studies_root).exists()
+
+
+def test_a_dry_run_without_expansion_downloads_nothing(
+    studies_root, cache_dir, cluster_archive, capsys
+):
+    main(
+        study_argv(
+            studies_root, cache_dir, cluster_archive, "--dry-run", "--no-expand", pad="2"
+        )
+    )
+
+    assert "Dry run: nothing was downloaded, written or recorded." in capsys.readouterr().out
+
+
+def test_an_unreadable_layer_does_not_sink_the_run(
+    studies_root, cache_dir, mpa_archive, cluster_archive, capsys
+):
+    """Expansion declines on what it cannot read and settles on what it can."""
+    from biosextract import expansion
+
+    real = expansion.read_window
+
+    def only_mpa(path, limit, key, layer=None):
+        if key == "saline-wetlands":
+            raise expansion.ExpansionError("no readable member")
+        return real(path, limit, key, layer=layer)
+
+    expansion.read_window = only_mpa
+    try:
+        code = main(
+            [
+                "study",
+                "--studies-root", str(studies_root),
+                "--study", "latest",
+                "--pad-km", "2",
+                "--expand-budget-km", "5",
+                "--datasets", "mpa", "saline-wetlands",
+                "--local-archive", f"mpa={cluster_archive}",
+                "--local-archive", f"saline-wetlands={mpa_archive}",
+                "--cache-dir", str(cache_dir),
+                "--yes",
+            ]
+        )
+    finally:
+        expansion.read_window = real
+
+    assert code == 0
+    printed = capsys.readouterr().out
+    assert "saline-wetlands: not consulted" in printed
+    report = expansion_report(studies_root)
+    assert report["layers"] == ["mpa"]
+    assert "saline-wetlands" in report["unread"]
+    # And the box still moved for the layer that could be read.
+    assert report["moved"] is True
+
+
+# --------------------------------------------------------------------------
 # the two extension points
 # --------------------------------------------------------------------------
 
@@ -591,11 +986,11 @@ def test_seam_reports_reach_the_study_metadata_but_built_in_ones_do_not(
     def note(state):
         return state, {"applied": True, "note": "for the record"}
 
-    studyrun.register_box_stage("expansion", note)
-    main(study_argv(studies_root, cache_dir, mpa_archive))
+    studyrun.register_box_stage("bookmark", note)
+    main(study_argv(studies_root, cache_dir, mpa_archive, "--no-expand"))
 
     entry = our_producer(studies_root)
-    assert entry["stages"] == {"expansion": {"applied": True, "note": "for the record"}}
+    assert entry["stages"]["bookmark"] == {"applied": True, "note": "for the record"}
     # The manifest keeps the full transcript; study.json keeps the decisions.
     assert "box" in read_manifest(studies_root)["request"]["stages"]
 

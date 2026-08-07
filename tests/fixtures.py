@@ -57,6 +57,63 @@ def make_shapefile(directory: Path, name: str = "mpa") -> Path:
     return directory / f"{name}.shp"
 
 
+#: A pair of reserves sharing an edge, standing in for South La Jolla SMR and
+#: South La Jolla SMCA. ``PAIR_CUT`` straddles the east edge of ``TEST_BBOX``;
+#: ``PAIR_PARTNER`` touches it and lies wholly outside the box, so a run that
+#: does not expand loses it entirely.
+PAIR_CUT = box(-117.25, 32.83, -117.23, 32.85)
+PAIR_PARTNER = box(-117.23, 32.83, -117.21, 32.85)
+
+#: Disjoint from both, and positioned so the box only reaches it *after* it has
+#: grown to capture the pair - which is what makes a second round necessary.
+SECOND_ROUND = box(-117.206, 32.860, -117.200, 32.870)
+
+#: Far enough east that no budget in these tests can reach it.
+UNREACHABLE = box(-117.00, 32.83, -116.98, 32.85)
+
+
+def make_cluster_shapefile(directory: Path, name: str = "mpa") -> Path:
+    """Four polygons: a touching pair, a second-round straggler, and a far one."""
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    geoms = [
+        to_albers(g) for g in (PAIR_CUT, PAIR_PARTNER, SECOND_ROUND, UNREACHABLE)
+    ]
+    raw.write(
+        str(directory / f"{name}.shp"),
+        np.array([to_wkb(g) for g in geoms], dtype=object),
+        [
+            np.array(
+                [
+                    "South La Jolla SMR",
+                    "South La Jolla SMCA",
+                    "Second Round SMR",
+                    "Unreachable SMR",
+                ],
+                dtype=object,
+            ),
+            np.array([100.0, 200.0, 300.0, 400.0]),
+        ],
+        fields=["NAME", "Acres"],
+        geometry_type="Polygon",
+        crs=ALBERS,
+        driver="ESRI Shapefile",
+    )
+    return directory / f"{name}.shp"
+
+
+def make_cluster_archive(tmp_path: Path, dataset_id: str = "ds582") -> Path:
+    """:func:`make_cluster_shapefile`, zipped like a BIOS download."""
+    stage = Path(tmp_path) / f"{dataset_id}_cluster"
+    make_cluster_shapefile(stage)
+    archive = Path(tmp_path) / f"{dataset_id}-cluster.zip"
+    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zf:
+        for fname in sorted(os.listdir(stage)):
+            zf.write(stage / fname, f"{dataset_id}/{fname}")
+        zf.writestr(f"{dataset_id}/metadata.xml", FGDC_METADATA)
+    return archive
+
+
 #: An FGDC metadata document of the shape BIOS actually ships, trimmed to the
 #: elements the citation builder reads.
 FGDC_METADATA = """<?xml version="1.0"?>

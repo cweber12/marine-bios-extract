@@ -15,11 +15,19 @@ rewriting it::
 
     resolve the study
     derive the box from the stations and the padding
+    resolve every dataset to a concrete archive
     --- BOX_SEAM ------------------- the expansion rule inserts itself here
     plan what this run will do
     --- PLAN_SEAM ------------------ the re-run policy inserts itself here
     execute: fetch, clip, write
     record: manifest, attribution, producer entry
+
+Resolution sits ahead of the seam rather than inside the plan because a stage
+there may need the *features* - the expansion rule cannot know what the boundary
+cuts without them - and a stage that resolved for itself would make every
+dataset cost a second directory listing and HEAD. ``bios network`` states the
+per-dataset request count as fact, so it stays one listing and one HEAD however
+many stages want the archive.
 
 A seam is a list of stages. A stage takes the :class:`RunState` and returns
 ``(state, report)``: the state it wants the rest of the run to see, and a
@@ -27,6 +35,9 @@ structured report of what it did, which is filed under its name in
 ``state.reports`` and ends up in the manifest. A later slice adds a module and
 registers it at a seam with :func:`register_box_stage` or
 :func:`register_plan_stage`; it does not edit the body of :func:`run`.
+:mod:`biosextract.expansion` is the first of those, and it is registered by
+``cmd_study`` rather than at import, so importing this package never quietly
+changes what a run does.
 
 Two rules make that work. A stage must return the state (it may return the same
 object, mutated), and a stage that did nothing must still return a report saying
@@ -133,6 +144,12 @@ class Request:
     output_crs: str | None = None
     resolution: float | None = None
     whole_features: bool = False
+    #: Grow the box out to whole feature groups. A property of the *box*, so it
+    #: changes every layer in the run; distinct from ``whole_features``, which
+    #: is a property of the clip and lets geometry extend past the box.
+    expand: bool = True
+    #: One number for every side, replacing the padding as the growth budget.
+    expand_budget_km: float | None = None
     refresh: bool = False
     force: bool = False
     dry_run: bool = False
@@ -151,6 +168,8 @@ class Request:
             "local_archives": {k: str(v) for k, v in self.local_archives.items()},
             "cache_dir": str(self.cache_dir),
             "whole_features": self.whole_features,
+            "expand": self.expand,
+            "expand_budget_km": self.expand_budget_km,
             "output_crs": self.output_crs or "EPSG:4326",
         }
 
@@ -169,6 +188,15 @@ class RunState:
     box: BBox | None = None
     #: One entry per dataset, in run order. See :func:`stage_plan`.
     plan: list[dict] = field(default_factory=list)
+    #: Dataset key -> the archive it resolved to. Filled once, before the box
+    #: seam, so nothing downstream resolves a second time.
+    sources: dict[str, catalog.ResolvedSource] = field(default_factory=dict)
+    #: Dataset key -> why it could not be resolved. Reported by :func:`stage_plan`,
+    #: which is where a person reads what this run will do.
+    source_errors: dict[str, str] = field(default_factory=dict)
+    #: Dataset key -> the fetched archive, so a stage that had to read a layer
+    #: early does not make the execute stage hash the same bytes again.
+    archives: dict[str, object] = field(default_factory=dict)
     #: Structured report per stage, keyed by stage name. Goes into the manifest.
     reports: dict[str, dict] = field(default_factory=dict)
     #: The subset of those contributed by stages registered at a seam. Kept
@@ -323,14 +351,35 @@ def stage_derive_box(state: RunState) -> tuple[RunState, dict]:
     }
 
 
-def stage_plan(state: RunState) -> tuple[RunState, dict]:
-    """Resolve each dataset and say what this run will produce.
+def stage_resolve_sources(state: RunState) -> tuple[RunState, dict]:
+    """Turn every dataset key into a concrete archive, once.
 
-    Resolution is a directory listing and a HEAD - no payload - so the plan can
-    name the real URL and size of everything that is about to be downloaded.
-    A dataset supplied with ``--local-archive`` is not resolved at all, which is
-    what makes a complete run possible with no network.
+    Resolution is a directory listing and a HEAD - no payload - so this costs no
+    bytes, and it is what lets the plan name the real URL and size of everything
+    about to be downloaded. A dataset supplied with ``--local-archive`` is not
+    resolved at all, which is what makes a complete run possible with no network.
+
+    Nothing is printed and nothing is refused here. A dataset that cannot be
+    resolved is recorded and handed to :func:`stage_plan`, which is where a
+    person reads what this run will do and where the refusal belongs.
     """
+    request = state.request
+    for key in request.datasets:
+        if key in request.local_archives:
+            continue
+        try:
+            state.sources[key] = catalog.resolve(catalog.get(key), timeout=request.timeout)
+        except catalog.CatalogError as exc:
+            state.source_errors[key] = str(exc)
+    return state, {
+        "resolved": sorted(state.sources),
+        "local": sorted(k for k in request.datasets if k in request.local_archives),
+        "unavailable": sorted(state.source_errors),
+    }
+
+
+def stage_plan(state: RunState) -> tuple[RunState, dict]:
+    """Say what this run will produce, and refuse a dataset that is not there."""
     request = state.request
     out_dir = state.out_dir
     entries: list[dict] = []
@@ -354,24 +403,23 @@ def stage_plan(state: RunState) -> tuple[RunState, dict]:
         if key in request.local_archives:
             entry["source"] = {"url": f"local:{request.local_archives[key]}"}
             print(f"  {key:20} local archive {request.local_archives[key]}")
+        elif key in state.source_errors:
+            exc = state.source_errors[key]
+            entry["error"] = exc
+            state.failures += 1
+            state.warnings.append(f"{key}: {exc}")
+            print(f"  {key:20} UNAVAILABLE - {exc.splitlines()[0]}")
+            if not request.keep_going:
+                raise StudyRunError(
+                    f"{key} could not be resolved:\n{exc}\n"
+                    "Pass --keep-going to extract the rest anyway."
+                )
         else:
-            try:
-                src = catalog.resolve(dataset, timeout=request.timeout)
-            except catalog.CatalogError as exc:
-                entry["error"] = str(exc)
-                state.failures += 1
-                state.warnings.append(f"{key}: {exc}")
-                print(f"  {key:20} UNAVAILABLE - {str(exc).splitlines()[0]}")
-                if not request.keep_going:
-                    raise StudyRunError(
-                        f"{key} could not be resolved:\n{exc}\n"
-                        "Pass --keep-going to extract the rest anyway."
-                    ) from exc
-            else:
-                entry["resolved"] = src
-                entry["source"] = src.as_dict()
-                size = f"{src.bytes / 1e6:.1f} MB" if src.bytes else "size unknown"
-                print(f"  {key:20} {size:>12}  {src.last_modified or 'date unknown'}")
+            src = state.sources[key]
+            entry["resolved"] = src
+            entry["source"] = src.as_dict()
+            size = f"{src.bytes / 1e6:.1f} MB" if src.bytes else "size unknown"
+            print(f"  {key:20} {size:>12}  {src.last_modified or 'date unknown'}")
         entries.append(entry)
 
     state.plan = entries
@@ -431,7 +479,7 @@ def stage_execute(state: RunState) -> tuple[RunState, dict]:
         dataset = catalog.get(key)
         print(f"\n{key} - {dataset.title}")
         try:
-            archive = _acquire(state, dataset, entry)
+            archive = acquire(state, dataset)
             payload = select_payload(archive.path, dataset.kind, dataset.layer)
             print(f"    reading {payload}")
 
@@ -527,26 +575,37 @@ def stage_execute(state: RunState) -> tuple[RunState, dict]:
     }
 
 
-def _acquire(state: RunState, dataset: catalog.Dataset, entry: dict):
-    """The archive for one dataset: adopted from disk, or fetched and cached."""
+def acquire(state: RunState, dataset: catalog.Dataset, verbose: bool = True):
+    """The archive for one dataset: adopted from disk, or fetched and cached.
+
+    Remembered on the state. A stage ahead of the plan may have needed to read
+    the layer already, and hashing 151 MB twice to learn the same sha256 is a
+    cost with nothing on the other side of it.
+    """
     request = state.request
     key = dataset.key
+    if key in state.archives:
+        return state.archives[key]
+
     if key in request.local_archives:
         src = catalog.ResolvedSource(
             dataset=dataset, url=f"local:{request.local_archives[key]}", bytes=None
         )
-        return fetch_mod.adopt_local(
-            src, request.local_archives[key], request.cache_dir, verbose=True
+        archive = fetch_mod.adopt_local(
+            src, request.local_archives[key], request.cache_dir, verbose=verbose
         )
-    src = entry.get("resolved") or catalog.resolve(dataset, timeout=request.timeout)
-    return fetch_mod.fetch(
-        src,
-        request.cache_dir,
-        refresh=request.refresh,
-        max_bytes=request.max_bytes,
-        timeout=request.timeout,
-        verbose=True,
-    )
+    else:
+        src = state.sources.get(key) or catalog.resolve(dataset, timeout=request.timeout)
+        archive = fetch_mod.fetch(
+            src,
+            request.cache_dir,
+            refresh=request.refresh,
+            max_bytes=request.max_bytes,
+            timeout=request.timeout,
+            verbose=verbose,
+        )
+    state.archives[key] = archive
+    return archive
 
 
 def _provenance(cite, box: BBox) -> dict:
@@ -760,12 +819,24 @@ def run(request: Request) -> int:
 
     state = apply_stage("study", stage_resolve_study, state)
     state = apply_stage("box", stage_derive_box, state)
+    state = apply_stage("resolve", stage_resolve_sources, state)
     state = apply_seam(BOX_SEAM, state)
     state = apply_stage("plan", stage_plan, state)
     state = apply_seam(PLAN_SEAM, state)
 
     if request.dry_run:
-        print("\nDry run: nothing was downloaded, written or recorded.")
+        if state.archives:
+            # The box cannot be settled without reading the layers, so a dry run
+            # that expands does download. Saying "nothing was downloaded" while
+            # 151 MB lands in the cache is the kind of small lie that costs
+            # trust in everything else the run says.
+            print(
+                "\nDry run: nothing was written or recorded. %d archive(s) were "
+                "downloaded into %s to settle the box; --no-expand skips that."
+                % (len(state.archives), request.cache_dir)
+            )
+        else:
+            print("\nDry run: nothing was downloaded, written or recorded.")
         return 0
 
     if not confirm(state):
