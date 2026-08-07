@@ -69,6 +69,13 @@ once. Nothing is fetched that you did not name, no links are followed, and no
 URLs are discovered. Metadata for citations is read out of the cached archive
 rather than fetched separately.
 
+`bios study` makes the same three requests per dataset and no more, but it makes
+step 3 earlier than you might expect: it grows the box out to whole feature
+groups before it plans, and it cannot know what the boundary cuts without
+reading the vector layers. So a `--dry-run` downloads the vector archives it
+would have used, and says so. `--no-expand` returns a dry run to step 1 and 2
+only.
+
 The User-Agent identifies this tool and links to the BIOS programme. Set the
 BIOS_CONTACT environment variable to append your email address, which is the
 courteous thing to do if you run this often.

@@ -53,16 +53,26 @@ Some details worth knowing:
   without coordinates are excluded, named on the console, and recorded in the
   producer entry with the reason — in the reference study that is the subject
   buoy itself, which is exactly the fact a run must not bury.
+- **The box grows to keep feature groups whole.** A rectangle from station
+  positions plus a round number of kilometres lands wherever it lands, and in
+  the reference study it falls through the middle of `South La Jolla SMR` and
+  drops its touching partner `South La Jolla SMCA` entirely — half a management
+  unit, which is worse than none of it because it looks complete. So the run
+  finds the features the boundary cuts, walks adjacency out to the whole
+  connected group, and moves the box to contain those groups plus a margin. See
+  [Growing the box to whole feature groups](#growing-the-box-to-whole-feature-groups).
 - **A layer with nothing in the box is still written**, with a recorded count of
   zero. "No saline wetlands within 10 km" is a result worth reading, not a file
   you never notice is missing.
 - **Downloads are cached in this repository**, not per study, so seven studies
   of the same coastline do not cost seven copies of a 151 MB archive.
 - **`--dry-run`** resolves and prints the box and the plan without writing
-  anything; **`--yes`** skips the confirmation. Without a terminal and without
-  `--yes` the command stops and says which flag it needed, rather than blocking
-  on a prompt nobody can see. It writes no escape sequences, so a redirected log
-  stays readable.
+  anything; **`--yes`** skips the confirmation. Note that a dry run *does*
+  download, because the box cannot be settled without reading the layers that
+  might be cut — it says so, and `--no-expand` makes it free. Without a terminal
+  and without `--yes` the command stops and says which flag it needed, rather
+  than blocking on a prompt nobody can see. It writes no escape sequences, so a
+  redirected log stays readable.
 - **`--force`** removes files already in `marine-bios\` that this run does not
   write. Without it they are listed and left alone.
 
@@ -192,6 +202,58 @@ To total the area of protected water in your box, sum `area_m2`. Summing
 `orig_Acres` answers a different question — the size of every MPA that happens
 to touch your box — and the column name is there to stop you doing it by
 accident.
+
+## Growing the box to whole feature groups
+
+`study` runs one more rule before it downloads anything: it finds the features
+the boundary cuts, walks adjacency out to the whole connected group, and moves
+the box far enough to contain those groups plus a small margin. It repeats,
+because growing the box reveals features the old one never touched, and it stops
+when nothing moves or after eight rounds.
+
+This is a property of the **box**, so the run still produces exactly one
+rectangle and every layer — raster included — gets that one. It is not the same
+thing as `--whole-features`, which is a property of the **clip** and lets
+individual geometries extend past the box. That flag stays off unless you ask
+for it.
+
+**Each side may only grow by the padding you chose for that side.** No new
+number is invented, and the cap scales with the intent you already expressed:
+ask for 2 km inland and the rule will not spend more than 2 km inland. That cap
+is what makes the rule safe on every layer instead of on a hand-maintained list
+of safe ones. Measured against the real published archives:
+
+| Layer | Features | Connected groups | Largest group |
+|---|---|---|---|
+| `mpa` | 155 | 100 | 5 features, 13.5 × 17.4 km |
+| `shoreline` | 13 248 | 1 831 | 1 163 features, 109.6 × 178.5 km |
+| `state-waters` | 8 | 8 | 1 feature, 649.6 × 1055.4 km |
+| `benthic-substrate` | 333 | 1 | 333 features, 655.5 × 1055.9 km |
+
+`mpa` is the case the rule is for: small, bounded groups. The other three are
+not, and they fail two different ways. `shoreline` and `benthic-substrate`
+chain — adjacency walks from one cut segment out to a group spanning a hundred
+kilometres, or for `benthic-substrate` the whole state as a single group of 333
+polygons. `state-waters` never chains at all, its eight features being mutually
+disjoint, but each one is a single `MultiLineString` running the length of
+California, so the cut feature is already bigger than any box. Either way the
+group will not fit inside the budget, so it is **left cut and reported by name
+and size** rather than dragging your box up the coast.
+
+A feature left cut keeps the `orig_*`, `clipped` and `clip_fraction` handling
+above, so no number in the output ever describes a polygon that no longer
+exists.
+
+- **`--no-expand`** turns the rule off and keeps the rectangle the padding
+  produced, cuts and all.
+- **`--expand-budget-km`** replaces the padding as the budget, one number for
+  every side. Useful when you want a tight study box but are willing to reach
+  further to keep a reserve whole.
+
+What moved, by how much per side, what was captured and what was refused is
+printed while the run happens, and recorded in both `manifest.json` and the
+study's own `producers` entry — along with the box before expansion and the box
+after, so the difference is never something you have to infer.
 
 ## Output formats
 

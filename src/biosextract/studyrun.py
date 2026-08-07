@@ -35,6 +35,9 @@ structured report of what it did, which is filed under its name in
 ``state.reports`` and ends up in the manifest. A later slice adds a module and
 registers it at a seam with :func:`register_box_stage` or
 :func:`register_plan_stage`; it does not edit the body of :func:`run`.
+:mod:`biosextract.expansion` is the first of those, and it is registered by
+``cmd_study`` rather than at import, so importing this package never quietly
+changes what a run does.
 
 Two rules make that work. A stage must return the state (it may return the same
 object, mutated), and a stage that did nothing must still return a report saying
