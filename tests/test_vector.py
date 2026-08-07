@@ -110,3 +110,49 @@ def test_box_that_selects_nothing_raises_rather_than_returning_empty(archive):
             BBox.parse("-100.0,40.0,-99.0,41.0"),
             verbose=False,
         )
+
+
+# --------------------------------------------------------------------------
+# a layer with nothing in the box
+# --------------------------------------------------------------------------
+
+#: Nothing of the fixture layer is anywhere near here.
+FAR_AWAY = "-100.0,40.0,-99.0,41.0"
+
+
+@pytest.fixture
+def empty(archive):
+    payload = select(archive, "vector")
+    return vector.clip(
+        payload.vsi_path,
+        BBox.parse(FAR_AWAY),
+        geometry_fields=("Acres",),
+        allow_empty=True,
+        verbose=False,
+    )
+
+
+def test_allow_empty_returns_a_shaped_result_instead_of_raising(empty):
+    result = empty
+
+    assert len(result) == 0
+    assert result.kept == 0
+    assert result.clipped_count == 0
+    # Shaped exactly like a result that found something: same columns, same
+    # renaming of the attributes a clip invalidates, same CRS.
+    assert "orig_Acres" in result.fields
+    assert result.recomputed_fields == ["Acres"]
+    assert result.fields[-4:] == ["clipped", "clip_fraction", "area_m2", "length_m"]
+    assert result.crs == "EPSG:4326"
+    assert result.source_crs == "EPSG:3310"
+    assert all(len(col) == 0 for col in result.field_data)
+
+
+def test_an_empty_result_can_be_written_in_every_format(empty, tmp_path):
+    """"No features here" is only a usable answer if it reaches disk."""
+    from biosextract.outputs import VECTOR_WRITERS
+
+    for fmt, (writer, ext) in VECTOR_WRITERS.items():
+        path = writer(empty, tmp_path / f"empty_{fmt}{ext}")
+        assert path.exists(), fmt
+        assert path.stat().st_size > 0, fmt
