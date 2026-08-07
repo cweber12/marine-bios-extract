@@ -23,6 +23,17 @@ $python = Join-Path $root ".venv\Scripts\python.exe"
 
 if (-not (Test-Path $python)) {
     Write-Host "No virtual environment found at .venv\" -ForegroundColor Yellow
+    Write-Host "    python -m venv .venv" -ForegroundColor Cyan
+    Write-Host "    .venv\Scripts\python.exe -m pip install -e `".[test]`"" -ForegroundColor Cyan
+    exit 1
+}
+
+# pytest is an optional extra, so a plain `pip install -e .` leaves it out.
+& $python -c "import pytest" 2>$null
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "pytest is not installed in .venv" -ForegroundColor Yellow
+    Write-Host "Install the test extra with:" -ForegroundColor Yellow
+    Write-Host "    .venv\Scripts\python.exe -m pip install -e `".[test]`"" -ForegroundColor Cyan
     exit 1
 }
 

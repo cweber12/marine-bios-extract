@@ -23,6 +23,10 @@ dependencies = [
     "shapely>=2.0",
 ]
 
+[project.optional-dependencies]
+# `pip install -e ".[test]"` - run-tests.ps1 needs this and nothing else.
+test = ["pytest>=7"]
+
 [project.scripts]
 bios = "biosextract.cli:main"
 
