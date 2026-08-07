@@ -606,3 +606,36 @@ def test_registering_the_same_name_twice_replaces_it():
 
     assert len(studyrun.BOX_SEAM) == 1
     assert studyrun.BOX_SEAM[0][1](None)[1] == {"second": True}
+
+
+def test_shapefile_sidecars_are_not_mistaken_for_leftovers(
+    studies_root, cache_dir, mpa_archive, capsys
+):
+    """A shapefile is not a file, and --force must not dismantle one."""
+    main(
+        study_argv(
+            studies_root, cache_dir, mpa_archive, "--force", "--formats", "shp"
+        )
+    )
+
+    printed = capsys.readouterr().out
+    produced = out_dir(studies_root)
+    assert "removing" not in printed
+    for ext in (".shp", ".shx", ".dbf", ".prj"):
+        assert (produced / f"mpa{ext}").is_file(), ext
+
+
+def test_a_run_that_extracts_nothing_leaves_no_empty_directory(
+    studies_root, cache_dir, mpa_archive
+):
+    """An empty marine-bios/ would claim this toolkit produced something."""
+
+    def skip_everything(state):
+        for entry in state.plan:
+            entry["skipped"] = "nothing to do"
+        return state, {}
+
+    studyrun.register_plan_stage("skip-all", skip_everything)
+
+    assert main(study_argv(studies_root, cache_dir, mpa_archive)) == 1
+    assert not out_dir(studies_root).exists()

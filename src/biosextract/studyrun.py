@@ -114,15 +114,6 @@ class Padding:
             "west_km": self.west_km,
         }
 
-    def budget(self, side: str) -> float:
-        """The growth budget for one side, for a stage registered at BOX_SEAM.
-
-        The expansion rule's cap is the padding already chosen for that side: no
-        new number is invented, and the cap scales with the intent the caller
-        already expressed.
-        """
-        return float(getattr(self, f"{side}_km"))
-
 
 @dataclass(frozen=True)
 class Request:
@@ -640,11 +631,23 @@ def _write_raster(state: RunState, dataset, payload, provenance):
     return [path], result.as_dict()
 
 
+#: A shapefile is not a file. The writer returns the ``.shp`` and GDAL puts the
+#: rest of it beside that, so a run that counted only what the writer handed
+#: back would report its own sidecars as leftovers - and delete them under
+#: --force, leaving a .shp that no longer opens.
+SHAPEFILE_SIDECARS = (
+    ".shx", ".dbf", ".prj", ".cpg", ".qix", ".sbn", ".sbx", ".qpj", ".shp.xml",
+)
+
+
 def _stale_files(out_dir: Path, written: list[Path]) -> list[Path]:
     """Files already in our directory that this run did not produce."""
     if not out_dir.is_dir():
         return []
     keep = {p.name for p in written} | {MANIFEST_NAME, ATTRIBUTION_NAME}
+    for path in written:
+        if path.suffix.lower() == ".shp":
+            keep |= {path.stem + ext for ext in SHAPEFILE_SIDECARS}
     return sorted(
         (p for p in out_dir.iterdir() if p.is_file() and p.name not in keep),
         key=lambda p: p.name,
@@ -772,6 +775,11 @@ def run(request: Request) -> int:
     state = apply_stage("execute", stage_execute, state)
 
     if not state.layers:
+        # Do not leave an empty marine-bios directory behind claiming this
+        # toolkit has produced something for the study.
+        out_dir = state.out_dir
+        if out_dir.is_dir() and not any(out_dir.iterdir()):
+            out_dir.rmdir()
         print("\nNothing was extracted.", file=sys.stderr)
         return 1
 
