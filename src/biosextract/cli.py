@@ -8,6 +8,8 @@ Commands
 ``list``     what this toolkit knows how to fetch, and whether it is wired up
 ``resolve``  confirm the published archives without downloading them
 ``extract``  the real work: fetch, clip, write, record
+``study``    the same work, for a study in the shared studies directory: the
+             box comes from the study's stations and the output lands inside it
 """
 
 from __future__ import annotations
@@ -23,6 +25,7 @@ from . import (
     citation as citation_mod,
     fetch as fetch_mod,
     manifest as manifest_mod,
+    studyrun as studyrun_mod,
 )
 from .archive import ArchiveError, select as select_payload
 from .bbox import BBox, BBoxError
@@ -65,6 +68,16 @@ def _resolve_bbox(args, cfg: dict) -> BBox:
         "negative in California), or --center LAT,LON with --radius-km, or point "
         "--config at a file that sets one."
     )
+
+
+def _parse_formats(spec: str | None, default: str = "geojson,csv,gpkg") -> list[str]:
+    formats = [f.strip().lower() for f in (spec or default).split(",") if f.strip()]
+    unknown = [f for f in formats if f not in VECTOR_WRITERS]
+    if unknown:
+        raise SystemExit(
+            f"unknown output format(s) {unknown}. Known: {', '.join(VECTOR_WRITERS)}"
+        )
+    return formats
 
 
 def _parse_local_archives(values: list[str] | None) -> dict[str, Path]:
@@ -150,16 +163,7 @@ def cmd_extract(args) -> int:
     )
     local = _parse_local_archives(args.local_archive)
 
-    formats = [
-        f.strip().lower()
-        for f in (args.formats or out_cfg.get("formats") or "geojson,csv,gpkg").split(",")
-        if f.strip()
-    ]
-    unknown = [f for f in formats if f not in VECTOR_WRITERS]
-    if unknown:
-        raise SystemExit(
-            f"unknown output format(s) {unknown}. Known: {', '.join(VECTOR_WRITERS)}"
-        )
+    formats = _parse_formats(args.formats or out_cfg.get("formats"))
 
     out_dir = Path(args.out_dir or out_cfg.get("dir") or "output")
     prefix = args.prefix or out_cfg.get("prefix") or "extract"
@@ -383,6 +387,73 @@ def cmd_extract(args) -> int:
     return 1 if failures and not args.keep_going else 0
 
 
+def _padding(args) -> "studyrun_mod.Padding":
+    """Four margins in kilometres, from --pad-km and the four per-side flags.
+
+    There is no default. A margin is a statement about the study area, and this
+    repo does not bake study areas into code - a run that did not say how much
+    coastline it wanted should say so, not silently pick a number that then
+    turns up in a manifest looking deliberate.
+    """
+    sides = ("north", "south", "east", "west")
+    given = {s: getattr(args, f"pad_{s}_km") for s in sides}
+    if args.pad_km is None and all(v is None for v in given.values()):
+        raise SystemExit(
+            "no padding given. The box is the tightest rectangle around the "
+            "study's positioned stations, which is routinely a few hundred "
+            "metres across, so a margin is required:\n"
+            "    --pad-km 10                       10 km on every side\n"
+            "    --pad-km 10 --pad-west-km 2       10 km, except 2 km inland\n"
+            "    --pad-north-km 5 --pad-south-km 5 --pad-east-km 20 --pad-west-km 1"
+        )
+    base = args.pad_km
+    resolved = {}
+    for side in sides:
+        value = given[side] if given[side] is not None else base
+        if value is None:
+            raise SystemExit(
+                f"no padding for the {side} side. Give --pad-{side}-km, or "
+                "--pad-km to set every side that has no value of its own."
+            )
+        resolved[f"{side}_km"] = float(value)
+    return studyrun_mod.Padding(**resolved)
+
+
+def cmd_study(args) -> int:
+    from . import studies as studies_mod
+
+    request = studyrun_mod.Request(
+        studies_root=(
+            Path(args.studies_root)
+            if args.studies_root
+            else studies_mod.default_studies_root()
+        ),
+        study=args.study,
+        datasets=catalog.resolve_keys(
+            ",".join(args.datasets) if args.datasets else None
+        ),
+        padding=_padding(args),
+        formats=_parse_formats(args.formats),
+        local_archives=_parse_local_archives(args.local_archive),
+        cache_dir=Path(args.cache_dir) if args.cache_dir else studies_mod.default_cache_dir(),
+        output_crs=args.output_crs,
+        resolution=args.resolution,
+        whole_features=args.whole_features,
+        refresh=args.refresh,
+        force=args.force,
+        dry_run=args.dry_run,
+        assume_yes=args.yes,
+        keep_going=args.keep_going,
+        timeout=args.timeout,
+        max_bytes=int((args.max_download_mb or 512) * 1024 * 1024),
+    )
+    try:
+        return studyrun_mod.run(request)
+    except (studies_mod.StudyError, studyrun_mod.StudyRunError) as exc:
+        print(f"\n{exc}", file=sys.stderr)
+        return 2
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="bios",
@@ -437,6 +508,68 @@ def build_parser() -> argparse.ArgumentParser:
     ext.add_argument("--timeout", type=int, default=600)
     ext.add_argument("--keep-going", action="store_true", help="continue after a dataset fails")
     ext.set_defaults(func=cmd_extract)
+
+    std = sub.add_parser(
+        "study",
+        help="extract for a study in ../studies, writing into the study folder",
+        description=(
+            "Build the box from a study's stations, extract the selected layers "
+            "into <study>/marine-bios/, and record the run in the study's own "
+            "metadata. Every answer is a flag, so the command runs unattended."
+        ),
+        epilog=(
+            "Example:\n"
+            "  bios study --study latest --pad-km 10 --datasets mpa shoreline --yes\n"
+            "\n"
+            "The study can be named by id, by label, by any unique fragment of "
+            "either, or as 'latest'. A fragment that matches more than one study "
+            "is an error listing them, never a silent pick of the newest."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    std.add_argument("--studies-root", type=Path, help="default ../studies")
+    std.add_argument(
+        "--study", required=True, help="study id, label, unique fragment, or 'latest'"
+    )
+    std.add_argument("--datasets", nargs="*", help="dataset keys; omit for all wired-up ones")
+    std.add_argument("--pad-km", type=float, help="margin for every side, in km")
+    std.add_argument("--pad-north-km", type=float, help="overrides --pad-km on this side")
+    std.add_argument("--pad-south-km", type=float, help="overrides --pad-km on this side")
+    std.add_argument("--pad-east-km", type=float, help="overrides --pad-km on this side")
+    std.add_argument("--pad-west-km", type=float, help="overrides --pad-km on this side")
+    std.add_argument("--formats", help="geojson,csv,gpkg,kmz,shp (default geojson,csv,gpkg)")
+    std.add_argument("--cache-dir", type=Path, help="default the repository .cache/")
+    std.add_argument("--output-crs", help="default EPSG:4326")
+    std.add_argument("--resolution", type=float, help="raster output cell size")
+    std.add_argument(
+        "--whole-features",
+        action="store_true",
+        help="keep intersecting features intact instead of cutting them at the box",
+    )
+    std.add_argument(
+        "--local-archive",
+        action="append",
+        metavar="KEY=PATH",
+        help="supply a manually downloaded archive for a gated dataset",
+    )
+    std.add_argument("--refresh", action="store_true", help="ignore the cache and re-download")
+    std.add_argument(
+        "--force",
+        action="store_true",
+        help="remove files already in the study's marine-bios directory that this run does not write",
+    )
+    std.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="resolve and show the box and the plan, then stop without writing",
+    )
+    std.add_argument(
+        "-y", "--yes", action="store_true", help="do not ask before writing"
+    )
+    std.add_argument("--max-download-mb", type=float, default=None)
+    std.add_argument("--timeout", type=int, default=600)
+    std.add_argument("--keep-going", action="store_true", help="continue after a dataset fails")
+    std.set_defaults(func=cmd_study)
     return p
 
 
@@ -447,7 +580,18 @@ def build_parser() -> argparse.ArgumentParser:
 #: "--bbox=-117.3,..." is the documented workaround; doing it here means nobody
 #: has to know that.
 _VALUE_FLAGS = frozenset(
-    {"--bbox", "--center", "--radius-km", "--resolution", "--max-download-mb"}
+    {
+        "--bbox",
+        "--center",
+        "--radius-km",
+        "--resolution",
+        "--max-download-mb",
+        "--pad-km",
+        "--pad-north-km",
+        "--pad-south-km",
+        "--pad-east-km",
+        "--pad-west-km",
+    }
 )
 
 
@@ -480,6 +624,9 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     except catalog.CatalogError as exc:
         print(f"Catalog error: {exc}", file=sys.stderr)
+        return 2
+    except studyrun_mod.StudyRunError as exc:
+        print(f"\n{exc}", file=sys.stderr)
         return 2
     except KeyboardInterrupt:
         print("\ninterrupted", file=sys.stderr)

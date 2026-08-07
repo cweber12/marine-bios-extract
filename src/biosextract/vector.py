@@ -119,6 +119,69 @@ def _reproject(geoms, src_crs: str, dst_crs: str):
     ]
 
 
+def _rename_geometry_fields(
+    fields: list[str], geometry_fields: tuple[str, ...]
+) -> list[str]:
+    """Prefix every declared geometry attribute with ``orig_``, in place.
+
+    Returns the names that were renamed. A field like ``Acres`` describes the
+    uncut feature and stops being true the moment a clip happens, so it is
+    never left sitting beside a geometry it no longer describes.
+    """
+    recomputed: list[str] = []
+    declared = {f.lower() for f in geometry_fields}
+    for i, name in enumerate(list(fields)):
+        if name.lower() in declared:
+            fields[i] = "orig_" + name
+            recomputed.append(name)
+    return recomputed
+
+
+def _empty_result(
+    fields: list[str],
+    field_data: list[np.ndarray],
+    geometry_type: str,
+    out_crs: str,
+    meas_crs: str,
+    source_crs: str,
+    source_features: int,
+    selected: int,
+    geometry_fields: tuple[str, ...],
+    whole_features: bool,
+) -> ClipResult:
+    """A layer with no features in the box, still shaped like a real result.
+
+    "Surveyed, nothing here" and "never asked for this layer" are different
+    facts. A caller that passes ``allow_empty`` wants the first of those on
+    disk: a file with the right columns, the right CRS and no rows, so the
+    absence is something a reader meets rather than something they infer from a
+    missing filename.
+    """
+    recomputed = _rename_geometry_fields(fields, geometry_fields)
+    fields = fields + ["clipped", "clip_fraction", "area_m2", "length_m"]
+    field_data = [np.asarray(col)[:0] for col in field_data] + [
+        np.array([], dtype=bool),
+        np.array([], dtype="float64"),
+        np.array([], dtype="float64"),
+        np.array([], dtype="float64"),
+    ]
+    return ClipResult(
+        geometry=np.array([], dtype=object),
+        fields=fields,
+        field_data=field_data,
+        crs=out_crs,
+        geometry_type=geometry_type,
+        source_features=source_features,
+        selected=selected,
+        kept=0,
+        clipped_count=0,
+        source_crs=str(source_crs),
+        measure_crs=meas_crs,
+        recomputed_fields=recomputed,
+        whole_features=whole_features,
+    )
+
+
 def clip(
     path: str,
     bbox: BBox,
@@ -127,6 +190,7 @@ def clip(
     whole_features: bool = False,
     output_crs: str | None = None,
     measure_crs: str | None = None,
+    allow_empty: bool = False,
     verbose: bool = True,
 ) -> ClipResult:
     """Read ``path``, keep what falls in ``bbox``, and return it ready to write.
@@ -135,6 +199,14 @@ def clip(
     cutting it at the boundary. The output then extends beyond the requested
     rectangle, which is sometimes what you want (a whole MPA rather than the
     corner of one) and is recorded in the manifest either way.
+
+    ``allow_empty`` returns a result with no features instead of raising
+    :class:`EmptyClipError`. The default stays a raise, because an ad-hoc
+    ``extract`` that selected nothing has almost certainly been given the wrong
+    box and should say so. A run over a named set of layers is the opposite
+    case: "no saline wetlands within 10 km" is an answer, and one worth having
+    on disk with a recorded count of zero rather than as a file that never
+    appeared.
     """
     info = read_info(path, layer=layer)
     source_crs = info.get("crs")
@@ -162,8 +234,16 @@ def clip(
     fields = [str(f) for f in meta["fields"]]
     field_data = [np.asarray(col) for col in field_data]
     selected = len(wkb)
+    gtype = meta.get("geometry_type") or "Unknown"
 
     if selected == 0:
+        if allow_empty:
+            if verbose:
+                print("    0 features in the box")
+            return _empty_result(
+                fields, field_data, gtype, out_crs, meas_crs, source_crs,
+                source_features, selected, geometry_fields, whole_features,
+            )
         raise EmptyClipError(
             "the bounding box selected no features from %s.\n"
             "Layer covers %s in %s; the box projects to %s."
@@ -206,6 +286,13 @@ def clip(
         )
 
     if not len(kept_geoms):
+        if allow_empty:
+            if verbose:
+                print(f"    0 of {selected} candidate features survived the exact clip")
+            return _empty_result(
+                fields, field_data, gtype, out_crs, meas_crs, source_crs,
+                source_features, selected, geometry_fields, whole_features,
+            )
         raise EmptyClipError(
             f"every candidate feature from {path.rsplit('/', 1)[-1]} fell outside "
             "the box once tested exactly (the prefilter is an envelope test)."
@@ -234,12 +321,7 @@ def clip(
 
     # Rename any attribute that describes the original geometry, so a stale
     # number can never be mistaken for a live one.
-    recomputed: list[str] = []
-    declared = {f.lower() for f in geometry_fields}
-    for i, name in enumerate(list(fields)):
-        if name.lower() in declared:
-            fields[i] = "orig_" + name
-            recomputed.append(name)
+    recomputed = _rename_geometry_fields(fields, geometry_fields)
 
     fields += ["clipped", "clip_fraction", "area_m2", "length_m"]
     field_data += [
@@ -250,7 +332,6 @@ def clip(
     ]
 
     out_geoms = _reproject(kept_geoms, source_crs, out_crs)
-    gtype = meta.get("geometry_type") or "Unknown"
 
     if verbose:
         note = " (whole features)" if whole_features else ""

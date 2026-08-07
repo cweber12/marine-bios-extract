@@ -108,6 +108,90 @@ class BBox:
             north=min(lat + dlat, 90.0),
         )
 
+    @classmethod
+    def from_envelope(
+        cls,
+        envelope: tuple[float, float, float, float],
+        north_km: float,
+        south_km: float,
+        east_km: float,
+        west_km: float,
+    ) -> "BBox":
+        """Pad a WEST,SOUTH,EAST,NORTH envelope by four independent distances.
+
+        The envelope is normally the tightest rectangle around a set of points -
+        a study's positioned stations, say - which on its own is routinely a
+        sliver a few hundred metres across, and has no area at all where two
+        points coincide. The padding is what makes it a usable study area.
+
+        Each side gets its own distance in **kilometres**, so a box can be
+        extended offshore without dragging it inland. Kilometres and not degrees
+        because a degree of longitude at 32.87 N is about 16% shorter than a
+        degree of latitude, and padding in degrees would produce a box whose
+        east-west margin is quietly smaller than its north-south one. The
+        conversion is done per axis at the envelope's centre latitude.
+
+        Miles are deliberately not offered: the registry holds a *nautical* mile
+        limit layer, everything internal is metric, and the sibling toolkits pad
+        in metres. An ambiguous "mile" in a marine repo is a defect waiting to
+        happen.
+
+        No minimum-size floor is applied. The caller chooses the padding, and
+        any padding worth typing already makes a usable box from a single point.
+        """
+        try:
+            west, south, east, north = (float(v) for v in envelope)
+        except (TypeError, ValueError) as exc:
+            raise BBoxError(
+                f"envelope must be four numbers (WEST,SOUTH,EAST,NORTH), got {envelope!r}"
+            ) from exc
+
+        pads = {
+            "north": north_km,
+            "south": south_km,
+            "east": east_km,
+            "west": west_km,
+        }
+        for side, value in pads.items():
+            if not math.isfinite(value):
+                raise BBoxError(f"{side} padding is not a finite number: {value!r}")
+            if value < 0:
+                raise BBoxError(
+                    f"{side} padding must not be negative, got {value} km. "
+                    "Padding grows the box; it never trims it."
+                )
+
+        if west > east or south > north:
+            raise BBoxError(
+                f"envelope {envelope!r} is inside out; order is WEST,SOUTH,EAST,NORTH"
+            )
+
+        centre_lat = (south + north) / 2.0
+        cos_lat = math.cos(math.radians(centre_lat))
+        if abs(cos_lat) < 1e-9:
+            raise BBoxError("cannot pad an envelope at a pole")
+
+        km_per_deg_lon = _KM_PER_DEG_LAT * cos_lat
+        padded = (
+            west - west_km / km_per_deg_lon,
+            south - south_km / _KM_PER_DEG_LAT,
+            east + east_km / km_per_deg_lon,
+            north + north_km / _KM_PER_DEG_LAT,
+        )
+        if padded[0] >= padded[2] or padded[1] >= padded[3]:
+            raise BBoxError(
+                "the padded envelope has no area. The stations span "
+                f"{east - west:.6f} x {north - south:.6f} degrees and the padding "
+                "adds nothing to at least one axis; give a positive padding on "
+                "every side."
+            )
+        return cls(
+            west=max(padded[0], -180.0),
+            south=max(padded[1], -90.0),
+            east=min(padded[2], 180.0),
+            north=min(padded[3], 90.0),
+        )
+
     # ---- geometry -----------------------------------------------------
 
     @property

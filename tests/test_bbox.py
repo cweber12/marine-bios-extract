@@ -121,3 +121,97 @@ def test_polygon_in_crs_round_trips():
 def test_spans_utm_zones():
     assert BBox.parse("-117.30,32.80,-117.24,32.88").spans_utm_zones == 1
     assert BBox.parse("-121.0,32.0,-114.0,35.0").spans_utm_zones > 1
+
+
+# --------------------------------------------------------------------------
+# padding a station envelope into a study box
+# --------------------------------------------------------------------------
+
+#: The reference study's positioned stations, as a WEST,SOUTH,EAST,NORTH
+#: envelope: a 0.9 x 0.2 km sliver off Scripps Pier.
+LA_JOLLA_ENVELOPE = (-117.267, 32.866, -117.257, 32.868)
+
+
+def test_each_side_is_padded_independently():
+    box = BBox.from_envelope(
+        LA_JOLLA_ENVELOPE, north_km=5.0, south_km=10.0, east_km=20.0, west_km=1.0
+    )
+    west, south, east, north = LA_JOLLA_ENVELOPE
+
+    # Four different distances give four different edge movements, and each one
+    # moves the edge it names.
+    assert north - box.north < 0
+    assert (box.north - north) < (south - box.south)  # 5 km north, 10 km south
+    assert (box.east - east) > (west - box.west)  # 20 km east, 1 km west
+    assert (box.north - north) * 2 == pytest.approx(south - box.south, rel=1e-9)
+
+
+def test_padding_is_symmetric_about_the_envelope():
+    box = BBox.from_envelope(
+        LA_JOLLA_ENVELOPE, north_km=7.0, south_km=7.0, east_km=7.0, west_km=7.0
+    )
+    west, south, east, north = LA_JOLLA_ENVELOPE
+
+    assert box.north - north == pytest.approx(south - box.south, rel=1e-12)
+    assert box.east - east == pytest.approx(west - box.west, rel=1e-12)
+    # ... and the envelope still sits in the middle of what came out.
+    assert (box.west + box.east) / 2 == pytest.approx((west + east) / 2, abs=1e-12)
+    assert (box.south + box.north) / 2 == pytest.approx((south + north) / 2, abs=1e-12)
+
+
+def test_padding_is_kilometres_converted_per_axis():
+    """A degree of longitude at 32.87 N is about 16% shorter than one of latitude."""
+    box = BBox.from_envelope(
+        LA_JOLLA_ENVELOPE, north_km=10.0, south_km=10.0, east_km=10.0, west_km=10.0
+    )
+    west, south, east, north = LA_JOLLA_ENVELOPE
+
+    grown_lat_deg = box.north - north
+    grown_lon_deg = box.east - east
+
+    # Equal kilometres, so more degrees east than north at this latitude ...
+    assert grown_lon_deg > grown_lat_deg
+    assert grown_lon_deg / grown_lat_deg == pytest.approx(
+        1 / math.cos(math.radians(32.867)), rel=1e-3
+    )
+    # ... and equal kilometres once measured back in kilometres.
+    assert box.height_km - 0.222 == pytest.approx(20.0, abs=0.05)
+
+
+def test_a_degenerate_envelope_still_produces_a_usable_box():
+    """Every station sharing one position is a real case, not an error."""
+    point = (-117.257, 32.867, -117.257, 32.867)
+
+    box = BBox.from_envelope(point, north_km=5.0, south_km=5.0, east_km=5.0, west_km=5.0)
+
+    assert box.width_km == pytest.approx(10.0, abs=0.05)
+    assert box.height_km == pytest.approx(10.0, abs=0.05)
+
+
+def test_zero_padding_on_a_degenerate_envelope_explains_itself():
+    point = (-117.257, 32.867, -117.257, 32.867)
+
+    with pytest.raises(BBoxError) as exc:
+        BBox.from_envelope(point, north_km=5.0, south_km=5.0, east_km=0.0, west_km=0.0)
+
+    assert "no area" in str(exc.value)
+
+
+def test_negative_padding_is_refused():
+    with pytest.raises(BBoxError) as exc:
+        BBox.from_envelope(
+            LA_JOLLA_ENVELOPE, north_km=5.0, south_km=-5.0, east_km=5.0, west_km=5.0
+        )
+
+    assert "south padding must not be negative" in str(exc.value)
+
+
+def test_an_inside_out_envelope_is_refused():
+    with pytest.raises(BBoxError):
+        BBox.from_envelope(
+            (-117.20, 32.90, -117.30, 32.80),
+            north_km=5.0,
+            south_km=5.0,
+            east_km=5.0,
+            west_km=5.0,
+        )
