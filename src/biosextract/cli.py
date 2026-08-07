@@ -420,7 +420,11 @@ def _padding(args) -> "studyrun_mod.Padding":
 
 
 def cmd_study(args) -> int:
-    from . import studies as studies_mod
+    from . import expansion as expansion_mod, studies as studies_mod
+
+    # Registered here rather than at import, so importing the package does not
+    # quietly change what a run does.
+    expansion_mod.register()
 
     request = studyrun_mod.Request(
         studies_root=(
@@ -439,6 +443,8 @@ def cmd_study(args) -> int:
         output_crs=args.output_crs,
         resolution=args.resolution,
         whole_features=args.whole_features,
+        expand=not args.no_expand,
+        expand_budget_km=args.expand_budget_km,
         refresh=args.refresh,
         force=args.force,
         dry_run=args.dry_run,
@@ -545,6 +551,22 @@ def build_parser() -> argparse.ArgumentParser:
         "--whole-features",
         action="store_true",
         help="keep intersecting features intact instead of cutting them at the box",
+    )
+    std.add_argument(
+        "--no-expand",
+        action="store_true",
+        help=(
+            "do not grow the box to whole feature groups; keep the rectangle the "
+            "padding produced, even where it cuts a reserve in half"
+        ),
+    )
+    std.add_argument(
+        "--expand-budget-km",
+        type=float,
+        help=(
+            "how far each side may grow to capture a whole feature group "
+            "(default: the padding chosen for that side)"
+        ),
     )
     std.add_argument(
         "--local-archive",

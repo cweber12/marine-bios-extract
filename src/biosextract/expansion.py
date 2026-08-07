@@ -492,3 +492,161 @@ def _names(fields: list[str], field_data, count: int) -> list[str]:
         if i is not None:
             return [str(v) for v in field_data[i]]
     return [f"feature {i}" for i in range(count)]
+
+
+# --------------------------------------------------------------------------
+# the run stage
+# --------------------------------------------------------------------------
+#
+# Everything above is a box, some geometry and a budget. What follows is the
+# plug: it registers at BOX_SEAM, gathers the geometry from the run, and hands
+# the answer back. The command body is not touched.
+
+
+def stage(state) -> tuple[object, dict]:
+    """Move :attr:`RunState.box` out to whole feature groups. A BOX_SEAM stage.
+
+    Only vector layers drive this. A raster has no features to be half of, and
+    it clips to whatever rectangle the vector layers settle on - expansion is a
+    property of the *box*, so the run still produces exactly one rectangle and
+    every selected layer gets it.
+
+    Nothing here may sink a run. A layer that cannot be read is a warning and a
+    named entry in the report; the box then settles on the layers that could be.
+    """
+    from . import catalog, studyrun
+    from .archive import select as select_payload
+
+    request = state.request
+    if not request.expand:
+        return state, {
+            "applied": False,
+            "reason": "disabled by --no-expand",
+        }
+
+    budget = _budget_for(request)
+    keys = [
+        key
+        for key in request.datasets
+        if key not in state.source_errors and catalog.get(key).kind == "vector"
+    ]
+    if not keys:
+        return state, {
+            "applied": False,
+            "reason": "no vector layer in this run; a raster has no feature groups",
+            "budget_km": budget.as_dict(),
+        }
+    if budget.exhausted:
+        return state, {
+            "applied": False,
+            "reason": "the padding is zero on every side, so there is no budget to spend",
+            "budget_km": budget.as_dict(),
+        }
+
+    limit = window(state.box, budget)
+    print(
+        "\nExpansion: reading %d vector layer(s) to find groups the box cuts, "
+        "up to\n           N %g km, S %g km, E %g km, W %g km - the padding "
+        "already chosen."
+        % (
+            len(keys),
+            budget.north_km,
+            budget.south_km,
+            budget.east_km,
+            budget.west_km,
+        )
+    )
+
+    layers: list[Layer] = []
+    unread: dict[str, str] = {}
+    for key in keys:
+        dataset = catalog.get(key)
+        try:
+            archive = studyrun.acquire(state, dataset, verbose=True)
+            payload = select_payload(archive.path, dataset.kind, dataset.layer)
+            layers.append(read_window(payload.vsi_path, limit, key, layer=None))
+        except Exception as exc:  # noqa: BLE001 - a layer we cannot read is not fatal
+            unread[key] = f"{type(exc).__name__}: {exc}"
+            state.warnings.append(f"{key}: not consulted for expansion: {exc}")
+            print(f"           {key}: not consulted - {str(exc).splitlines()[0]}")
+
+    result = expand(state.box, layers, budget)
+    state.box = result.box
+    _announce(result, unread)
+
+    report = result.as_dict()
+    if unread:
+        report["unread"] = unread
+    return state, report
+
+
+def _budget_for(request) -> Budget:
+    """The per-side budget: the padding, unless a flag says otherwise."""
+    if request.expand_budget_km is not None:
+        return Budget.uniform(float(request.expand_budget_km))
+    padding = request.padding
+    return Budget(
+        north_km=padding.north_km,
+        south_km=padding.south_km,
+        east_km=padding.east_km,
+        west_km=padding.west_km,
+    )
+
+
+def _announce(result: Expansion, unread: dict[str, str]) -> None:
+    """Say what moved and what did not. A refusal left in a file protects nobody."""
+    if result.moved:
+        grew = result.before.growth_km(result.box)
+        moved_sides = ", ".join(
+            f"{km:.1f} km {side}" for side, km in grew.items() if km > 0.01
+        )
+        print(f"           box grew {moved_sides}")
+        print(f"           now {result.box}")
+    else:
+        print("           the box was left where it was")
+
+    for group in result.captured:
+        print(
+            "           captured %s: %s (%d feature(s), %.1f x %.1f km)"
+            % (
+                group.layer,
+                group.label(),
+                len(group.indices),
+                group.width_km,
+                group.height_km,
+            )
+        )
+    for group in result.refused:
+        print(
+            "           REFUSED %s: %s - %d feature(s) spanning %.1f x %.1f km, "
+            "larger than the budget allows"
+            % (
+                group.layer,
+                group.label(),
+                len(group.indices),
+                group.width_km,
+                group.height_km,
+            )
+        )
+    still = {k: v for k, v in result.still_cut.items() if v}
+    if still:
+        print(
+            "           still cut at the boundary: %s. Their orig_* fields and "
+            "clip_fraction\n           describe the cut, as always."
+            % ", ".join(f"{k} {v}" for k, v in sorted(still.items()))
+        )
+    if result.rounds_exhausted:
+        print(
+            "           stopped after %d rounds with features still cut; this box "
+            "is not\n           settled. Raise the budget or pass --no-expand."
+            % result.rounds
+        )
+    for key, reason in unread.items():
+        print(f"           {key} did not take part: {reason.splitlines()[0]}")
+
+
+def register() -> None:
+    """Plug :func:`stage` into the run. Idempotent."""
+    from . import studyrun
+
+    studyrun.register_box_stage("expansion", stage)

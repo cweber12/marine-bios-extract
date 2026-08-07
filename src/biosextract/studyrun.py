@@ -141,6 +141,12 @@ class Request:
     output_crs: str | None = None
     resolution: float | None = None
     whole_features: bool = False
+    #: Grow the box out to whole feature groups. A property of the *box*, so it
+    #: changes every layer in the run; distinct from ``whole_features``, which
+    #: is a property of the clip and lets geometry extend past the box.
+    expand: bool = True
+    #: One number for every side, replacing the padding as the growth budget.
+    expand_budget_km: float | None = None
     refresh: bool = False
     force: bool = False
     dry_run: bool = False
@@ -159,6 +165,8 @@ class Request:
             "local_archives": {k: str(v) for k, v in self.local_archives.items()},
             "cache_dir": str(self.cache_dir),
             "whole_features": self.whole_features,
+            "expand": self.expand,
+            "expand_budget_km": self.expand_budget_km,
             "output_crs": self.output_crs or "EPSG:4326",
         }
 
@@ -814,7 +822,18 @@ def run(request: Request) -> int:
     state = apply_seam(PLAN_SEAM, state)
 
     if request.dry_run:
-        print("\nDry run: nothing was downloaded, written or recorded.")
+        if state.archives:
+            # The box cannot be settled without reading the layers, so a dry run
+            # that expands does download. Saying "nothing was downloaded" while
+            # 151 MB lands in the cache is the kind of small lie that costs
+            # trust in everything else the run says.
+            print(
+                "\nDry run: nothing was written or recorded. %d archive(s) were "
+                "downloaded into %s to settle the box; --no-expand skips that."
+                % (len(state.archives), request.cache_dir)
+            )
+        else:
+            print("\nDry run: nothing was downloaded, written or recorded.")
         return 0
 
     if not confirm(state):
