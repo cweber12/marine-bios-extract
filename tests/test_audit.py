@@ -15,6 +15,7 @@ import pytest
 
 from biosextract import catalog, citation as citation_mod
 from biosextract.citation import UNKNOWN
+from biosextract.cli import main
 from tests.fixtures import make_archive, make_bare_archive
 
 
@@ -152,3 +153,73 @@ def test_a_row_serialises_for_the_manifest(registry, tmp_path):
     d = row.as_dict()
     assert set(("key", "license", "problems", "notes", "clear")) <= set(d)
     assert isinstance(d["problems"], list)
+
+
+# --------------------------------------------------------------------------
+# the command
+# --------------------------------------------------------------------------
+
+
+def argv(tmp_path, *extra, datasets=("benthic-substrate",)):
+    return ["citations", "--cache-dir", str(tmp_path / "empty-cache"), *datasets, *extra]
+
+
+def test_the_command_reports_without_check_and_succeeds(tmp_path, capsys):
+    """Without --check it is a report, and a report that fails your shell is a
+    nuisance."""
+    code = main(argv(tmp_path, datasets=("shoreline",)))
+
+    printed = capsys.readouterr().out
+    assert code == 0
+    assert "shoreline" in printed
+    assert "TODO" in printed, "it still says what is outstanding"
+
+
+def test_check_exits_non_zero_when_a_layer_is_unverified(tmp_path, capsys):
+    code = main(argv(tmp_path, "--check", datasets=("shoreline",)))
+
+    assert code == 1
+    assert "Outstanding: shoreline" in capsys.readouterr().out
+
+
+def test_check_exits_zero_when_nothing_is_outstanding(tmp_path, capsys):
+    """benthic-substrate is the one layer verified so far; when the rest catch
+    up, this is the shape of a passing gate."""
+    code = main(argv(tmp_path, "--check", datasets=("benthic-substrate",)))
+
+    assert code == 0
+    assert "Outstanding" not in capsys.readouterr().out
+
+
+def test_the_command_says_it_could_not_read_an_archive_it_does_not_have(
+    tmp_path, capsys
+):
+    main(argv(tmp_path, datasets=("shoreline",)))
+    assert "no cached archive" in capsys.readouterr().out
+
+
+def test_the_command_never_reaches_a_publisher(tmp_path, monkeypatch):
+    def no_requests(*a, **kw):  # pragma: no cover - only runs on a regression
+        raise AssertionError("bios citations must not reach a publisher")
+
+    monkeypatch.setattr(catalog, "_open", no_requests)
+    assert main(argv(tmp_path, datasets=("shoreline", "mpa"))) == 0
+
+
+def test_all_includes_the_datasets_a_default_run_would_skip(tmp_path, capsys):
+    main(argv(tmp_path, "--all", datasets=()))
+    printed = capsys.readouterr().out
+
+    assert "state-waters" in printed, "unverified datasets are shown with --all"
+    assert "cmecs-substrate" in printed, "so are gated ones"
+    assert "[unverified]" in printed and "[manual]" in printed
+
+
+def test_a_gated_dataset_is_shown_but_does_not_fail_the_gate(tmp_path, capsys):
+    code = main(argv(tmp_path, "--all", "--check", datasets=()))
+    printed = capsys.readouterr().out
+
+    assert "cmecs-substrate" in printed
+    outstanding = printed.split("Outstanding: ")[1].splitlines()[0]
+    assert "cmecs-substrate" not in outstanding
+    assert code == 1, "...the wired-up layers still fail it"

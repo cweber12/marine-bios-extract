@@ -152,6 +152,54 @@ def cmd_resolve(args) -> int:
     return 1 if failures and not args.keep_going else 0
 
 
+def cmd_citations(args) -> int:
+    """Report which layers have a verified citation, and what is missing.
+
+    Reads the cache and the registry only. Nothing here asks a publisher for
+    anything, so it is safe to run on a plane and honest about what it could
+    not see rather than downloading half a gigabyte to find out.
+    """
+    cache_dir = Path(args.cache_dir or ".cache")
+    keys = catalog.resolve_keys(",".join(args.datasets) if args.datasets else None)
+    if args.all:
+        keys = sorted(catalog.DATASETS)
+    datasets = {k: catalog.get(k) for k in keys}
+
+    rows = citation_mod.audit(datasets, cache_dir)
+    print(f"Cache:  {cache_dir}\n")
+
+    for row in rows:
+        mark = "ok " if row.clear else "-- "
+        status = "" if row.status == "ready" else f"  [{row.status}]"
+        print(f"{mark}{row.key:20}{status}")
+        print(f"      licence:    {row.license}")
+        print(f"      cite as:    {row.originator} ({row.publication_date})")
+        source = row.metadata_source or ("archive not read" if not row.archive else "none")
+        print(f"      read from:  {row.archive or 'no cached archive'} - {source}")
+        for problem in row.problems:
+            print(f"      TODO:       {problem}")
+        for note in row.notes:
+            print(f"      note:       {note}")
+        print()
+
+    outstanding = citation_mod.unverified(rows)
+    ready = [r for r in rows if r.status == "ready"]
+    print(
+        f"{len(ready) - len(outstanding)} of {len(ready)} wired-up layer(s) have "
+        "a citation nobody needs to finish by hand."
+    )
+    if outstanding:
+        print("Outstanding: " + ", ".join(r.key for r in outstanding))
+        print(
+            "A licence is verified by a person reading the publisher's page and "
+            "recording what it says.\nNothing here guesses one: an unverified "
+            "licence stays UNKNOWN."
+        )
+    # --check is what makes this usable as a gate. Without it the command is a
+    # report, and a report that fails your shell is a nuisance.
+    return 1 if outstanding and args.check else 0
+
+
 def cmd_extract(args) -> int:
     cfg = _load_config(args.config) if args.config else {}
     extract_cfg = cfg.get("extract", {})
@@ -486,6 +534,27 @@ def build_parser() -> argparse.ArgumentParser:
     res.add_argument("--timeout", type=int, default=60)
     res.add_argument("--keep-going", action="store_true")
     res.set_defaults(func=cmd_resolve)
+
+    cit = sub.add_parser(
+        "citations",
+        help="report which layers have a verified licence and citation",
+        description=(
+            "Audit the citation of every dataset from the registry and whatever "
+            "archives are already cached. Makes no network request, so it says "
+            "what it could not see rather than downloading to find out."
+        ),
+    )
+    cit.add_argument("datasets", nargs="*", help="dataset keys; omit for all wired-up ones")
+    cit.add_argument("--cache-dir", type=Path, help="default the repository .cache/")
+    cit.add_argument(
+        "--all", action="store_true", help="include gated and unverified datasets"
+    )
+    cit.add_argument(
+        "--check",
+        action="store_true",
+        help="exit non-zero if any wired-up layer still needs a person",
+    )
+    cit.set_defaults(func=cmd_citations)
 
     ext = sub.add_parser("extract", help="fetch, clip and write")
     ext.add_argument("--bbox", help="WEST,SOUTH,EAST,NORTH in degrees")
