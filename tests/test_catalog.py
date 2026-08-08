@@ -7,11 +7,12 @@ confirms against a real directory listing.
 
 from __future__ import annotations
 
+import json
 import re
 
 import pytest
 
-from biosextract import catalog
+from biosextract import catalog, citation
 from tests import registry as synthetic
 
 
@@ -75,6 +76,33 @@ def test_a_hand_verified_pin_must_say_where_it_came_from():
                 f"{key} pins a citation fact but does not say where it was read"
             )
             assert d.verified_on, f"{key} pins a citation fact but not when it was read"
+
+
+def test_the_real_registry_audits_without_crashing(tmp_path):
+    """The one test that runs the audit over the live registry.
+
+    Every other assertion about verified, unverified or untraceable state moved
+    to `tests/registry.py` in #24, and this is what would otherwise have been
+    lost with them: the audit meeting real entries, with their real mix of
+    absent licences, pinned dates and statuses nobody has resolved. That is the
+    coverage that made the five breakages informative in the first place.
+
+    What it asserts is that the audit *runs* and reports every dataset, and
+    that a row survives the trip into a manifest. Not that any layer is clean -
+    that is somebody's outstanding work, and a test demanding it would pit the
+    suite against the rule about never committing red.
+    """
+    rows = citation.audit(catalog.DATASETS, tmp_path / "empty-cache")
+
+    assert {r.key for r in rows} == set(catalog.DATASETS), "every dataset is reported"
+    for row in rows:
+        assert row.license, "a row always names a licence, even if it is UNKNOWN"
+        assert row.status in ("ready", "manual", "unverified")
+        json.dumps(row.as_dict())  # it has to reach a manifest
+
+    # The verdict is computed over the real mix too; what it *says* is a matter
+    # for whoever is finishing the licences, not for this test.
+    citation.unverified(rows)
 
 
 @pytest.mark.parametrize(
