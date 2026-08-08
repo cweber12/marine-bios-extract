@@ -262,9 +262,11 @@ DATASETS: dict[str, Dataset] = {
         dataset_id="ds3091",
         geometry_fields=("Acres", "Hectares", "Shape_Area", "Shape_Leng"),
         notes=(
-            "Hard/soft prediction - modelled, so context rather than ground "
-            "truth. The archive ships two .gdb members and only ds3091_vector "
-            "opens; the other is named but unreadable."
+            "Hard/soft prediction from seafloor rugosity - modelled, so context "
+            "rather than ground truth. The archive ships the product three "
+            "times: ds3091_vector.gdb (read here), ds3091.gdb (the same thing "
+            "as a 10 m statewide raster, which is why it will not open as a "
+            "vector) and tiff/ds3091.tif. Only the vector is wired up."
         ),
         read_note=(
             "333 polygons of 100+ parts each, so even a bbox-filtered read "

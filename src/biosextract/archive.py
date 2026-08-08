@@ -10,12 +10,16 @@ directory of ``.adf`` files, or a GeoTIFF - sometimes several, alongside PDFs
 and metadata. Classification is therefore explicit and, when it is ambiguous,
 reported rather than resolved by picking the first match.
 
-Classification by filename is a *claim*, not a fact. ``ds3091.zip`` ships two
-``.gdb`` directories and only one of them opens; counting the broken one made
-the archive look ambiguous and put a real layer out of reach entirely. So when
-more than one candidate survives, each is asked to open before it is allowed to
-create an ambiguity, and anything the driver rejects is named with its reason
-rather than dropped in silence.
+Classification by filename is a *claim*, not a fact, and a ``.gdb`` says nothing
+about what is inside it. ``ds3091.zip`` ships two: ``ds3091_vector.gdb`` holds
+the polygons, while ``ds3091.gdb`` holds the same product as a 10 m statewide
+raster. Both open - but only one of them opens *as a vector*, which is what a
+vector selection is asking. Counting the raster as a second vector candidate
+made the archive look ambiguous and put a real layer out of reach entirely.
+
+So when more than one candidate survives, each is asked to open **as the kind
+being selected** before it is allowed to create an ambiguity, and one that
+cannot is named with the driver's reason rather than dropped in silence.
 """
 
 from __future__ import annotations
@@ -187,12 +191,18 @@ def match(payloads: list[Payload], hint: str) -> list[Payload]:
 
 
 def opens(payload: Payload) -> str | None:
-    """``None`` if the driver can open ``payload``, else the reason it cannot.
+    """``None`` if ``payload`` opens *as its own kind*, else why it does not.
 
     Only the container is opened - layer names for a vector, band count for a
     raster - so nothing is read and the probe costs a header, not a scan. A
     dataset that opens with no layers or no bands counts as unreadable too: it
     is a directory the classifier recognised, not data anyone can use.
+
+    "As its own kind" is the whole point rather than a detail. A file
+    geodatabase can hold vectors or rasters and the filename does not say
+    which; ``ds3091.gdb`` opens perfectly as a 10 m raster and not at all as a
+    vector. For a vector selection it is not a broken member, it is not a
+    member at all, and the reason reported says so.
     """
     try:
         if payload.kind == "vector":
@@ -215,7 +225,7 @@ def opens(payload: Payload) -> str | None:
 def readable(
     payloads: list[Payload], verbose: bool = True
 ) -> tuple[list[Payload], dict[str, str]]:
-    """Split candidates into those that open and those that do not.
+    """Split candidates into those that open as their kind and those that do not.
 
     Returns the survivors and a ``member -> reason`` map of what was rejected.
     Callers report the map; nothing is discarded quietly, because a member that
@@ -228,9 +238,9 @@ def readable(
         if reason is None:
             good.append(p)
         else:
-            rejected[p.member] = reason
+            rejected[p.member] = f"not readable as {p.kind}: {reason}"
             if verbose:
-                print(f"    skipping {p.member}: {reason}")
+                print(f"    skipping {p.member}: not readable as {p.kind}: {reason}")
     return good, rejected
 
 
@@ -310,8 +320,8 @@ def select(
         return payloads[0]
 
     # More than one candidate by name. Before calling that a conflict, make each
-    # one prove it opens: ds3091.zip's two .gdb directories are one dataset and
-    # one that no driver recognises.
+    # one prove it opens as this kind: ds3091.zip's two .gdb directories are the
+    # vector product and the same product as a raster, not two vector layers.
     survivors, rejected = readable(payloads, verbose=verbose)
 
     if len(survivors) == 1:
@@ -319,10 +329,12 @@ def select(
 
     if not survivors:
         raise ArchiveError(
-            "%s contains %d %s dataset(s) by name, and not one of them opens:\n  %s"
+            "%s contains %d member(s) named like %s data, and not one of them "
+            "opens as %s:\n  %s"
             % (
                 Path(archive).name,
                 len(payloads),
+                kind,
                 kind,
                 "\n  ".join(f"{member} - {reason}" for member, reason in rejected.items()),
             )
@@ -336,9 +348,7 @@ def select(
             kind,
             "\n  ".join(str(p) for p in survivors),
             (
-                "(skipped, will not open: "
-                + "; ".join(f"{m} - {r}" for m, r in rejected.items())
-                + ")\n"
+                "(skipped: " + "; ".join(f"{m} - {r}" for m, r in rejected.items()) + ")\n"
                 if rejected
                 else ""
             ),

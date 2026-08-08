@@ -51,11 +51,11 @@ def test_ambiguity_is_reported_not_guessed(tmp_path):
     assert "quality" in chosen.member
 
 
-def test_unreadable_member_does_not_create_an_ambiguity(tmp_path, capsys):
-    """ds3091.zip in miniature: two .gdb members, one of which no driver opens.
+def test_a_member_that_will_not_open_as_this_kind_is_not_an_ambiguity(tmp_path, capsys):
+    """ds3091.zip in miniature: two .gdb members, one readable as a vector.
 
-    Classified on filename that is two datasets and a refusal. Opened, there is
-    exactly one, and the layer must resolve with no hint at all.
+    Classified on filename that is two vector datasets and a refusal. Opened as
+    vectors it is one, and the layer must resolve with no hint at all.
     """
     from tests.fixtures import make_two_gdb_archive
 
@@ -67,7 +67,9 @@ def test_unreadable_member_does_not_create_an_ambiguity(tmp_path, capsys):
 
     out = capsys.readouterr().out
     assert "v1_final/ds3091.gdb" in out, "a skipped member must be named, not dropped"
-    assert "skipping" in out
+    # "not readable as vector", not "broken": the real ds3091.gdb is a raster
+    # geodatabase that opens perfectly well as the kind it actually is.
+    assert "not readable as vector" in out
 
 
 def test_layer_hint_can_select_a_member_whose_name_is_a_prefix(tmp_path):
@@ -142,7 +144,7 @@ def test_probe_names_the_drivers_reason(tmp_path):
 
 
 def test_an_archive_whose_candidates_all_fail_says_so(tmp_path):
-    """Not 'no vector data' - the members are there, they just do not open."""
+    """Not 'no vector data' - the members are there, they just are not vectors."""
     zip_path = tmp_path / "broken.zip"
     with zipfile.ZipFile(zip_path, "w") as zf:
         for gdb in ("one.gdb", "two.gdb"):
@@ -151,7 +153,7 @@ def test_an_archive_whose_candidates_all_fail_says_so(tmp_path):
     with pytest.raises(archive_mod.ArchiveError) as exc:
         archive_mod.select(zip_path, "vector", verbose=False)
     message = str(exc.value)
-    assert "not one of them opens" in message
+    assert "not one of them opens as vector" in message
     assert "one.gdb" in message and "two.gdb" in message
 
 

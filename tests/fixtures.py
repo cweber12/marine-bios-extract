@@ -211,13 +211,16 @@ def make_geodatabase(directory: Path, layer: str = "ds391") -> Path:
 def make_two_gdb_archive(
     tmp_path: Path, dataset_id: str = "ds3091", metadata: str | None = FGDC_METADATA
 ) -> Path:
-    """``ds3091.zip`` in miniature: two ``.gdb`` members, only one of which opens.
+    """``ds3091.zip`` in miniature: two ``.gdb`` members, one readable as vector.
 
-    The real archive ships ``v1_final/ds3091.gdb`` - which no driver recognises -
-    beside ``v1_final/ds3091_vector.gdb``, which holds the layer. Classified on
-    filename alone that reads as two datasets and an ambiguity; opened, it is one
-    dataset. The broken member here is a directory of plausible-looking
-    ``.gdbtable`` junk, exactly what the name-based classifier accepts.
+    The real archive ships ``v1_final/ds3091.gdb`` - a *raster* geodatabase
+    holding the 10 m statewide mosaic, which opens as a raster and never as a
+    vector - beside ``v1_final/ds3091_vector.gdb``, which holds the polygons.
+    Classified on filename alone that reads as two vector datasets and an
+    ambiguity; opened as vectors, it is one. The stand-in here is a directory of
+    plausible-looking ``.gdbtable`` junk rather than a real raster geodatabase,
+    because nothing in this stack can write one; what it reproduces is the shape
+    that matters, a ``.gdb`` beside a ``.gdb`` that will not open as a vector.
 
     Note the shorter name is the *unreadable* one, so a hint of ``ds3091`` must
     be able to reach a member whose name is a prefix of its neighbour's.
