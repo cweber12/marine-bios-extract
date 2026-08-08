@@ -13,7 +13,7 @@ import pytest
 
 from biosextract import citation as citation_mod
 from biosextract.citation import UNKNOWN, Citation, format_pubdate
-from tests.fixtures import ISO_METADATA, TEST_BBOX, make_archive
+from tests.fixtures import ESRI_METADATA, ISO_METADATA, TEST_BBOX, make_archive
 
 
 def test_reads_fgdc_originator_and_date(archive):
@@ -39,6 +39,56 @@ def test_reads_iso19139_despite_namespaces(tmp_path):
     c = citation_mod.from_archive(arch, "shoreline", "Shoreline Types")
     assert c.originator == "NOAA Office of Response and Restoration"
     assert "Not for navigation." in c.use_constraints
+
+
+def test_reads_esri_arcgis_metadata(tmp_path):
+    """The dialect ArcGIS Pro exports, and the one ds3091 ships.
+
+    Its citation was complete all along; nothing here knew the element names,
+    so a publishable layer was reported as needing to be finished by hand.
+    """
+    arch = make_archive(tmp_path, "ds3091", metadata=ESRI_METADATA)
+    c = citation_mod.from_archive(arch, "benthic-substrate", "Some Label We Chose")
+
+    assert c.originator == "Marine Region GIS"
+    assert c.publication_date == "2023, Apr. 20"
+    assert c.complete is True
+    assert not c.warnings
+    assert c.title.endswith("[ds3091]"), "Esri names the title resTitle"
+
+
+def test_esri_originator_follows_cdfws_own_rule(tmp_path):
+    """Point of contact beats the credits line, and document order decides nothing.
+
+    CDFW's Citing BIOS page: use the Originator from the Publication section, or
+    failing that the primary person in Point of Contact. `idCredit` names who
+    funded and produced the work, and it sits *earlier* in the document - so a
+    single flat lookup would pick it.
+    """
+    arch = make_archive(tmp_path, "ds3091", metadata=ESRI_METADATA)
+    c = citation_mod.from_archive(arch, "benthic-substrate", "Substrates")
+
+    assert c.originator == "Marine Region GIS"
+    assert "Seafloor Mapping Project" not in c.originator
+
+
+def test_esri_use_constraints_are_prose_not_markup(tmp_path):
+    """Esri stores constraint text as an escaped HTML fragment.
+
+    Printed raw it is a wall of DIV and SPAN on the console, which is how a
+    licence requirement ends up being skipped by the person it binds.
+    """
+    arch = make_archive(tmp_path, "ds3091", metadata=ESRI_METADATA)
+    c = citation_mod.from_archive(arch, "benthic-substrate", "Substrates")
+
+    assert "Creative Commons Attribution 4.0" in c.use_constraints
+    for markup in ("<DIV", "<SPAN", "&lt;", "STYLE="):
+        assert markup not in c.use_constraints, markup
+
+
+def test_a_less_than_sign_in_prose_is_not_markup():
+    """Stripping tags must not eat a sentence about shallow water."""
+    assert citation_mod._tidy("depth < 30 m, slope > 5") == "depth < 30 m, slope > 5"
 
 
 def test_missing_metadata_is_reported_not_invented(tmp_path):

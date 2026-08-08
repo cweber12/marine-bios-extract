@@ -18,6 +18,7 @@ confidently wrong attribution is worse than an obviously incomplete one.
 
 from __future__ import annotations
 
+import html
 import re
 import xml.etree.ElementTree as ET
 import zipfile
@@ -76,10 +77,25 @@ def _all_text(root, *names: str) -> list[str]:
     return out
 
 
+#: A tag, as opposed to a less-than sign in prose. Requires a name character
+#: straight after the bracket, so "depth < 30 m" survives and "<DIV …>" does not.
+_TAG_RE = re.compile(r"<\s*/?[a-zA-Z][^>]*>")
+
+
 def _tidy(text: str | None, limit: int = 2000) -> str | None:
+    """Collapse a metadata value into one readable line.
+
+    Esri's ArcGIS metadata stores constraint text as an escaped HTML *fragment*:
+    the licence statement arrives as ``<DIV STYLE="text-align:Left;"><SPAN>…``
+    once the XML layer has decoded its entities. Printed as-is that is markup on
+    a console rather than a sentence, and a use constraint nobody can read
+    protects nobody - so tags come out here, where every dialect benefits, and
+    any entity left behind by a doubly-escaped document is decoded after.
+    """
     if not text:
         return None
-    collapsed = re.sub(r"\s+", " ", text).strip()
+    stripped = _TAG_RE.sub(" ", text) if _TAG_RE.search(text) else text
+    collapsed = re.sub(r"\s+", " ", html.unescape(stripped)).strip()
     return collapsed[:limit] if collapsed else None
 
 
@@ -183,21 +199,55 @@ class Citation:
         return "\n".join(lines)
 
 
+def _originator(root) -> str | None:
+    """Who to credit, in the order CDFW themselves prescribe.
+
+    Their `Citing BIOS <https://wildlife.ca.gov/Data/BIOS/Citing-BIOS>`_ page is
+    the authority: "The Originator will be listed in the Publication section of
+    the metadata, if one exists. If there isn't an Originator, use the Primary
+    Person listed in the Point of Contact section."
+
+    So the tiers are asked in turn rather than all at once - a single lookup
+    would let document order decide the answer, and in an Esri document the
+    programme credit sits before the contact. ``idCredit`` is last because it
+    names who funded and produced the work ("California Coastal and Seafloor
+    Mapping Project, ...") rather than who is cited for it; it is a better
+    answer than ``[unknown]``, and a worse one than either name above it.
+    """
+    return (
+        _first_text(root, "origin", "organisationName", "citedResponsibleParty")
+        or _first_text(root, "rpindname", "rporgname")
+        or _first_text(root, "idcredit")
+    )
+
+
 def _parse_metadata_xml(blob: bytes) -> dict:
-    """Pull citation fields out of an FGDC or ISO 19139 document."""
+    """Pull citation fields out of an FGDC, ISO 19139 or Esri ArcGIS document.
+
+    Three dialects, one set of lookups: matching is on local element names, so
+    no namespace map has to be kept current. Esri's format is the one ArcGIS Pro
+    exports by default and is what several BIOS layers now ship - ds3091 carries
+    a complete citation in it, and was reported as needing hand-finishing purely
+    because nothing here knew the element names.
+    """
     try:
         root = ET.fromstring(blob)
     except ET.ParseError:
         return {}
 
     return {
-        "originator": _tidy(
-            _first_text(root, "origin", "organisationName", "citedResponsibleParty"), 200
-        ),
+        "originator": _tidy(_originator(root), 200),
         "pubdate": _first_text(root, "pubdate", "publicationDate", "date"),
-        "title": _tidy(_first_text(root, "title"), 300),
+        # Esri names the title `resTitle`, so ds3091's own title was never read
+        # and the registry label stood in for it - silently, since a label is
+        # not a missing value and nothing warned.
+        "title": _tidy(_first_text(root, "title", "resTitle"), 300),
         "use_constraints": _tidy(
-            " ".join(_all_text(root, "useconst", "useLimitation", "otherConstraints"))
+            " ".join(
+                _all_text(
+                    root, "useconst", "useLimitation", "otherConstraints", "useLimit"
+                )
+            )
         ),
         "access_constraints": _tidy(
             " ".join(_all_text(root, "accconst", "accessConstraints")), 500
