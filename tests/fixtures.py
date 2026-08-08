@@ -163,6 +163,33 @@ ISO_METADATA = """<?xml version="1.0"?>
 """
 
 
+#: Esri's ArcGIS metadata format - what ArcGIS Pro exports by default, and what
+#: ds3091 ships. Trimmed from `v1_final/tiff/ds3091.tif.xml` to the elements the
+#: parser reads, keeping three properties of the real document that matter:
+#: `idCredit` appears *before* the citation contact, so document order must not
+#: decide the originator; there is no `origin` element at all; and `useLimit`
+#: holds an escaped HTML fragment rather than a sentence.
+ESRI_METADATA = """<?xml version="1.0"?>
+<metadata xml:lang="en">
+  <dataIdInfo>
+    <idCitation>
+      <resTitle>Predicted Nearshore Benthic Substrates of California - R7 - CDFW [ds3091]</resTitle>
+      <date><pubDate>2023-04-20T00:00:00</pubDate></date>
+    </idCitation>
+    <idCredit>California Coastal and Seafloor Mapping Project, California Department of Fish and Wildlife</idCredit>
+    <idPoC>
+      <rpIndName>Marine Region GIS</rpIndName>
+      <rpOrgName>California Department of Fish and Wildlife</rpOrgName>
+      <role><RoleCd value="007"/></role>
+    </idPoC>
+    <resConst><Consts><useLimit>&lt;DIV STYLE="text-align:Left;"&gt;&lt;P&gt;&lt;SPAN
+      STYLE="font-weight:bold;"&gt;License:&lt;/SPAN&gt;&lt;SPAN&gt; This work is licensed under
+      Creative Commons Attribution 4.0 International License.&lt;/SPAN&gt;&lt;/P&gt;&lt;/DIV&gt;</useLimit></Consts></resConst>
+  </dataIdInfo>
+</metadata>
+"""
+
+
 def make_archive(
     tmp_path: Path, dataset_id: str = "ds582", metadata: str | None = FGDC_METADATA
 ) -> Path:
