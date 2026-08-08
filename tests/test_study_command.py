@@ -15,6 +15,7 @@ about itself afterwards.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 
 import pytest
 
@@ -914,6 +915,83 @@ def test_an_unreadable_layer_does_not_sink_the_run(
     assert "saline-wetlands" in report["unread"]
     # And the box still moved for the layer that could be read.
     assert report["moved"] is True
+
+
+def test_a_slow_layer_says_it_is_reading_before_the_pause(
+    studies_root, cache_dir, mpa_archive, capsys, monkeypatch
+):
+    """Since expansion, a slow layer stalls the run before the plan appears.
+
+    `benthic-substrate` is the real one: 333 polygons of 100+ parts each, read
+    twice - once by expansion, once to clip. A minute of silence with nothing on
+    screen is indistinguishable from a hang, so the note is printed *before* the
+    read, and it is the expansion read that has to carry it.
+    """
+    from biosextract import catalog
+
+    dataset = catalog.get("mpa")
+    monkeypatch.setitem(
+        catalog.DATASETS,
+        "mpa",
+        replace(dataset, read_note="this one takes a while"),
+    )
+
+    main(study_argv(studies_root, cache_dir, mpa_archive))
+
+    printed = capsys.readouterr().out
+    assert "mpa: reading - this one takes a while" in printed
+    expansion_line = printed.index("this one takes a while")
+    assert expansion_line < printed.index("features kept"), (
+        "the warning is worth nothing after the wait it explains"
+    )
+
+
+def test_the_slow_layer_in_the_registry_is_the_one_that_is_slow():
+    """The note is a measured fact about ds3091, not decoration."""
+    from biosextract import catalog
+
+    noted = {k for k, d in catalog.DATASETS.items() if d.read_note}
+    assert noted == {"benthic-substrate"}
+    assert "minute" in catalog.get("benthic-substrate").read_note
+
+
+def test_an_ambiguous_archive_refuses_with_advice_this_command_can_take(
+    studies_root, cache_dir, tmp_path, capsys
+):
+    """`bios study` has no --layer flag, so its refusal must not demand one.
+
+    An unfollowable instruction is worse than none: it sends the reader looking
+    for a flag that was never there instead of at the two ways out that exist.
+    """
+    from biosextract.cli import build_parser
+    from tests.fixtures import make_ambiguous_archive
+
+    ambiguous = make_ambiguous_archive(tmp_path / "archives")
+    code = main(
+        [
+            "study",
+            "--studies-root", str(studies_root),
+            "--study", "latest",
+            "--pad-km", "5",
+            "--datasets", "mpa",
+            "--local-archive", f"mpa={ambiguous}",
+            "--cache-dir", str(cache_dir),
+            "--yes",
+        ]
+    )
+
+    assert code == 1, "a genuine ambiguity still refuses rather than guessing"
+    printed = capsys.readouterr().out
+    assert "no unambiguous choice" in printed
+    assert "bios extract --datasets mpa --layer" in printed
+    assert "catalog.py" in printed, "the registry pin is the other way out"
+    assert "Name one with --layer." not in printed
+
+    # And the flag the advice does not mention is indeed absent here.
+    study_parser = build_parser()._subparsers._group_actions[0].choices["study"]
+    assert "--layer" not in {
+        opt for action in study_parser._actions for opt in action.option_strings
+    }
 
 
 # --------------------------------------------------------------------------

@@ -161,7 +161,6 @@ failing with an import traceback three calls deep.
 |---|---|---|---|
 | `mpa` | vector | ds582 | California Marine Protected Areas |
 | `mpa-coords` | vector | ds3207 | MPA boundary coordinates |
-| `state-waters` | vector | ds3158 | Three nautical mile state maritime limit |
 | `shoreline` | vector | ds3115 | Shoreline types |
 | `saline-wetlands` | vector | ds2864 | Saline wetlands (ACE) |
 | `benthic-substrate` | vector | ds3091 | Predicted nearshore benthic substrates |
@@ -178,6 +177,15 @@ behind an email registration form. Download it once, then:
 `watersheds`, `quads-24k`, `stream-gages` and `flood-hazard` are declared but
 not yet wired up. Asking for one tells you where its data lives rather than
 guessing a URL and 404ing.
+
+`state-waters` (ds3158) is declared and downloadable but also unverified, for a
+different reason: its archive holds the 3 nm limit twice, once as a line and
+once as a polygon covering all state water, and nobody has chosen. Asking for it
+prints that choice instead of failing on an ambiguous archive. It is a
+jurisdictional boundary rather than a physical one — for a buoy inside state
+water it is one constant fact, and the polygon clipped to a study box is a
+near-solid fill — so wiring it up is a slice of its own that starts by picking
+line or polygon on purpose.
 
 ## Clipping, and the attribute trap
 

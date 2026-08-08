@@ -51,6 +51,112 @@ def test_ambiguity_is_reported_not_guessed(tmp_path):
     assert "quality" in chosen.member
 
 
+def test_a_member_that_will_not_open_as_this_kind_is_not_an_ambiguity(tmp_path, capsys):
+    """ds3091.zip in miniature: two .gdb members, one readable as a vector.
+
+    Classified on filename that is two vector datasets and a refusal. Opened as
+    vectors it is one, and the layer must resolve with no hint at all.
+    """
+    from tests.fixtures import make_two_gdb_archive
+
+    zip_path = make_two_gdb_archive(tmp_path)
+
+    payload = archive_mod.select(zip_path, "vector")
+    assert payload.member == "v1_final/ds3091_vector.gdb"
+    assert payload.fmt == "filegdb"
+
+    out = capsys.readouterr().out
+    assert "v1_final/ds3091.gdb" in out, "a skipped member must be named, not dropped"
+    # "not readable as vector", not "broken": the real ds3091.gdb is a raster
+    # geodatabase that opens perfectly well as the kind it actually is.
+    assert "not readable as vector" in out
+
+
+def test_layer_hint_can_select_a_member_whose_name_is_a_prefix(tmp_path):
+    """`--layer ds3091` must mean ds3091.gdb, not "both, so ambiguous"."""
+    from tests.fixtures import make_two_gdb_archive
+
+    payloads = archive_mod.inspect(make_two_gdb_archive(tmp_path))
+    assert len(payloads) == 2, "the fixture is only interesting with both members"
+
+    for hint, expected in (
+        ("ds3091", "v1_final/ds3091.gdb"),
+        ("ds3091.gdb", "v1_final/ds3091.gdb"),
+        ("v1_final/ds3091.gdb", "v1_final/ds3091.gdb"),
+        ("ds3091_vector", "v1_final/ds3091_vector.gdb"),
+        ("ds3091_vector.gdb", "v1_final/ds3091_vector.gdb"),
+        ("v1_final", "both"),  # genuinely names both; not a selection
+    ):
+        matched = archive_mod.match(payloads, hint)
+        if expected == "both":
+            assert len(matched) == 2, f"{hint!r} should stay ambiguous"
+        else:
+            assert [p.member for p in matched] == [expected], f"hint {hint!r}"
+
+
+def test_naming_the_unreadable_member_fails_on_the_hint_not_three_stages_later(tmp_path):
+    from tests.fixtures import make_two_gdb_archive
+
+    with pytest.raises(archive_mod.ArchiveError) as exc:
+        archive_mod.select(make_two_gdb_archive(tmp_path), "vector", "ds3091")
+    message = str(exc.value)
+    assert "'ds3091'" in message and "does not open" in message
+    assert "ds3091_vector.gdb" in message, "it should point at what does open"
+
+
+def test_layer_hint_is_case_insensitive_and_forgives_whitespace(tmp_path):
+    from tests.fixtures import make_two_gdb_archive
+
+    payloads = archive_mod.inspect(make_two_gdb_archive(tmp_path))
+    assert [p.member for p in archive_mod.match(payloads, "  DS3091.GDB ")] == [
+        "v1_final/ds3091.gdb"
+    ]
+
+
+def test_a_layer_hint_that_names_nothing_is_said_out_loud(tmp_path, capsys):
+    """Silently ignoring a hint is how someone reads the wrong layer's numbers."""
+    from tests.fixtures import make_two_gdb_archive
+
+    payload = archive_mod.select(make_two_gdb_archive(tmp_path), "vector", "ds9999")
+    assert payload.member == "v1_final/ds3091_vector.gdb", "the readable one still wins"
+    assert "matched no member" in capsys.readouterr().out
+
+
+def test_inspect_still_lists_the_member_that_will_not_open(tmp_path):
+    """The listing is a listing. Only `select` judges what opens."""
+    from tests.fixtures import make_two_gdb_archive
+
+    members = [p.member for p in archive_mod.inspect(make_two_gdb_archive(tmp_path))]
+    assert "v1_final/ds3091.gdb" in members
+    assert "v1_final/ds3091_vector.gdb" in members
+
+
+def test_probe_names_the_drivers_reason(tmp_path):
+    from tests.fixtures import make_two_gdb_archive
+
+    payloads = archive_mod.inspect(make_two_gdb_archive(tmp_path))
+    broken = next(p for p in payloads if p.member == "v1_final/ds3091.gdb")
+    good = next(p for p in payloads if p.member.endswith("_vector.gdb"))
+
+    assert archive_mod.opens(good) is None
+    reason = archive_mod.opens(broken)
+    assert reason and "Error" in reason, f"expected a driver reason, got {reason!r}"
+
+
+def test_an_archive_whose_candidates_all_fail_says_so(tmp_path):
+    """Not 'no vector data' - the members are there, they just are not vectors."""
+    zip_path = tmp_path / "broken.zip"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        for gdb in ("one.gdb", "two.gdb"):
+            zf.writestr(f"{gdb}/a00000001.gdbtable", b"not a geodatabase")
+
+    with pytest.raises(archive_mod.ArchiveError) as exc:
+        archive_mod.select(zip_path, "vector", verbose=False)
+    message = str(exc.value)
+    assert "not one of them opens as vector" in message
+    assert "one.gdb" in message and "two.gdb" in message
+
+
 def test_file_geodatabase_registered_once(tmp_path):
     zip_path = tmp_path / "gdb.zip"
     with zipfile.ZipFile(zip_path, "w") as zf:

@@ -182,6 +182,82 @@ def make_archive(
     return archive
 
 
+def make_geodatabase(directory: Path, layer: str = "ds391") -> Path:
+    """A real file geodatabase holding the same three polygons as the shapefile.
+
+    Written with GDAL's OpenFileGDB driver, which is also what reads the BIOS
+    archives that ship a ``.gdb``, so the fixture exercises the same path a real
+    download does.
+    """
+    directory = Path(directory)
+    directory.parent.mkdir(parents=True, exist_ok=True)
+    geoms = [to_albers(g) for g in (INSIDE, STRADDLE, OUTSIDE)]
+    raw.write(
+        str(directory),
+        np.array([to_wkb(g) for g in geoms], dtype=object),
+        [
+            np.array(["Hard", "Extent", "Hard"], dtype=object),
+            np.array([100.0, 200.0, 300.0]),
+        ],
+        fields=["Sub", "Acres"],
+        geometry_type="Polygon",
+        crs=ALBERS,
+        driver="OpenFileGDB",
+        layer=layer,
+    )
+    return directory
+
+
+def make_two_gdb_archive(
+    tmp_path: Path, dataset_id: str = "ds3091", metadata: str | None = FGDC_METADATA
+) -> Path:
+    """``ds3091.zip`` in miniature: two ``.gdb`` members, one readable as vector.
+
+    The real archive ships ``v1_final/ds3091.gdb`` - a *raster* geodatabase
+    holding the 10 m statewide mosaic, which opens as a raster and never as a
+    vector - beside ``v1_final/ds3091_vector.gdb``, which holds the polygons.
+    Classified on filename alone that reads as two vector datasets and an
+    ambiguity; opened as vectors, it is one. The stand-in here is a directory of
+    plausible-looking ``.gdbtable`` junk rather than a real raster geodatabase,
+    because nothing in this stack can write one; what it reproduces is the shape
+    that matters, a ``.gdb`` beside a ``.gdb`` that will not open as a vector.
+
+    Note the shorter name is the *unreadable* one, so a hint of ``ds3091`` must
+    be able to reach a member whose name is a prefix of its neighbour's.
+    """
+    stage = Path(tmp_path) / f"{dataset_id}_two_gdb"
+    good = make_geodatabase(stage / "v1_final" / f"{dataset_id}_vector.gdb")
+
+    archive = Path(tmp_path) / f"{dataset_id}.zip"
+    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zf:
+        for fname in sorted(os.listdir(good)):
+            zf.write(good / fname, f"v1_final/{dataset_id}_vector.gdb/{fname}")
+        # The member that will not open: right shape, wrong bytes.
+        for fname in ("a00000001.gdbtable", "a00000001.gdbtablx", "gdb"):
+            zf.writestr(f"v1_final/{dataset_id}.gdb/{fname}", b"not a geodatabase")
+        if metadata:
+            zf.writestr(f"{dataset_id}/metadata.xml", metadata)
+    return archive
+
+
+def make_ambiguous_archive(tmp_path: Path, dataset_id: str = "ds3158") -> Path:
+    """Two shapefiles that both open: a genuine ambiguity, and one to refuse.
+
+    ``ds3158.zip`` is the real example - a line product and a polygon product
+    side by side, both readable - where the tool has no basis for choosing and
+    guessing would produce a plausible wrong answer.
+    """
+    stage = Path(tmp_path) / f"{dataset_id}_ambiguous"
+    make_shapefile(stage, "line_version")
+    make_shapefile(stage, "poly_version")
+    archive = Path(tmp_path) / f"{dataset_id}.zip"
+    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zf:
+        for fname in sorted(os.listdir(stage)):
+            zf.write(stage / fname, f"{dataset_id}/{fname}")
+        zf.writestr(f"{dataset_id}/metadata.xml", FGDC_METADATA)
+    return archive
+
+
 def make_raster_archive(tmp_path: Path, dataset_id: str = "ds3151") -> Path:
     """A GeoTIFF in Albers, zipped, standing in for Kelp Persistence."""
     import rasterio

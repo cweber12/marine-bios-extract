@@ -125,6 +125,12 @@ class Dataset:
     #: being true the moment a feature is clipped. Recomputed on output.
     geometry_fields: tuple[str, ...] = ()
     notes: str = ""
+    #: What reading this layer costs, printed *before* the read starts. Since
+    #: the box is expanded to whole feature groups, every selected vector layer
+    #: is read before the plan appears, so a slow one stalls a run - a --dry-run
+    #: included - before anything is on screen. Silence that long is
+    #: indistinguishable from a hang.
+    read_note: str = ""
     #: Licence verified out of band and recorded here. Anything found in the
     #: archive's own metadata document wins over this at runtime, because that
     #: travels with the bytes. Empty means "not verified" and will surface as
@@ -135,12 +141,16 @@ class Dataset:
     use_constraints: str = ""
     #: "ready"      wired up and fetchable unattended
     #: "manual"     published behind a form; needs --local-archive
-    #: "unverified" declared, but its download has not been confirmed against
-    #:              the publisher yet - resolving one raises rather than
-    #:              guessing a URL
+    #: "unverified" declared, but not confirmed against the publisher - either
+    #:              its download URL is unknown, or its archive holds a choice
+    #:              nobody has made. Resolving one raises rather than guessing.
     #: Only "ready" datasets are included when no --datasets list is given, so
     #: a batch run can never half-succeed on a source that needs a human.
     status: str = "ready"
+    #: Why a dataset is not "ready", in the words a user should read when they
+    #: ask for it by name. A status with no reason attached is re-litigated
+    #: every time someone meets it, because the decision lived in a transcript.
+    status_reason: str = ""
     landing_url: str = ""
 
 
@@ -210,6 +220,22 @@ DATASETS: dict[str, Dataset] = {
         kind="vector",
         dataset_id="ds3158",
         geometry_fields=("Shape_Leng", "LENGTH"),
+        status="unverified",
+        status_reason=(
+            "ds3158.zip holds this limit twice and nobody has chosen which is\n"
+            "meant:\n"
+            "    ds3158.gdb      the 3 nm line, 8 MultiLineString features\n"
+            "    ds3158_alt.gdb  all state water as one polygon, 5888 sq mi\n"
+            "Both open, so this is an unmade decision rather than a bug. It has\n"
+            "stayed unmade because a jurisdictional boundary carries almost\n"
+            "nothing for a buoy study: the polygon clipped to a study box is a\n"
+            "near-solid fill, and whether the line lands in the box at all\n"
+            "depends entirely on the west padding. Decided 2026-08-07, issue #12.\n"
+            "Wiring it up is a slice that starts by choosing line or polygon on\n"
+            "purpose."
+        ),
+        landing_url="https://filelib.wildlife.ca.gov/Public/BDB/GIS/BIOS/metadata/DS3158.html",
+        notes="Jurisdictional, not ecological. See status_reason before wiring up.",
     ),
     "shoreline": Dataset(
         key="shoreline",
@@ -235,7 +261,17 @@ DATASETS: dict[str, Dataset] = {
         kind="vector",
         dataset_id="ds3091",
         geometry_fields=("Acres", "Hectares", "Shape_Area", "Shape_Leng"),
-        notes="Hard/soft prediction.",
+        notes=(
+            "Hard/soft prediction from seafloor rugosity - modelled, so context "
+            "rather than ground truth. The archive ships the product three "
+            "times: ds3091_vector.gdb (read here), ds3091.gdb (the same thing "
+            "as a 10 m statewide raster, which is why it will not open as a "
+            "vector) and tiff/ds3091.tif. Only the vector is wired up."
+        ),
+        read_note=(
+            "333 polygons of 100+ parts each, so even a bbox-filtered read "
+            "takes a minute or two"
+        ),
     ),
     # ---- CDFW BIOS, raster ------------------------------------------------
     "kelp-persistence": Dataset(
@@ -450,6 +486,23 @@ def resolve_bios(dataset: Dataset, timeout: int = 60) -> ResolvedSource:
 
 def resolve(dataset: Dataset, timeout: int = 60) -> ResolvedSource:
     """Resolve any registered dataset to a concrete, confirmed download."""
+    # Status is checked before provider, because "unverified" is a statement
+    # about the dataset and not about whether a URL can be found. A BIOS
+    # archive that resolves perfectly well and then holds an unmade choice
+    # would otherwise fail three stages later, on a symptom rather than the
+    # reason, and with nothing on screen about the decision behind it.
+    if dataset.status == "unverified":
+        raise CatalogError(
+            "%s (%s) is declared but not wired up (status=unverified).\n%s%s"
+            % (
+                dataset.key,
+                dataset.title,
+                dataset.status_reason or
+                "Its download has not been confirmed against the publisher.",
+                f"\nStart from {dataset.landing_url}" if dataset.landing_url else "",
+            )
+        )
+
     if dataset.provider == "bios":
         return resolve_bios(dataset, timeout=timeout)
 
