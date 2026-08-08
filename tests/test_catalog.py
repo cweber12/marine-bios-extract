@@ -7,21 +7,56 @@ confirms against a real directory listing.
 
 from __future__ import annotations
 
+import json
+import re
+
 import pytest
 
-from biosextract import catalog
+from biosextract import catalog, citation
+from tests import registry as synthetic
+
+
+def assert_well_formed(key, d):
+    """The shape every registry entry must have, real or synthetic."""
+    assert d.key == key, "registry key and dataset.key must match"
+    assert d.kind in ("vector", "raster")
+    assert d.status in ("ready", "manual", "unverified")
+    assert d.provider in ("bios", "pmep", "usgs", "fema")
+    if d.provider == "bios":
+        assert d.dataset_id, f"{key} is a BIOS dataset but has no ds id"
+    if d.status != "ready":
+        assert d.landing_url, f"{key} is not automatic, so it must say where to go"
 
 
 def test_every_registered_dataset_is_self_consistent():
     for key, d in catalog.DATASETS.items():
-        assert d.key == key, "registry key and dataset.key must match"
-        assert d.kind in ("vector", "raster")
-        assert d.status in ("ready", "manual", "unverified")
-        assert d.provider in ("bios", "pmep", "usgs", "fema")
-        if d.provider == "bios":
-            assert d.dataset_id, f"{key} is a BIOS dataset but has no ds id"
-        if d.status != "ready":
-            assert d.landing_url, f"{key} is not automatic, so it must say where to go"
+        assert_well_formed(key, d)
+
+
+def test_the_synthetic_registry_collides_with_no_real_key():
+    """`tests/registry.py` owns the content assertions; it must own its keys too.
+
+    A synthetic key that shadowed a real one would let a test that still
+    reaches for real content pass quietly against a substitute, instead of
+    dying with the KeyError that says so. That is the same class of bug as the
+    five in-place fixes this registry replaces, in a form nobody would notice.
+    """
+    collisions = set(synthetic.SYNTHETIC) & set(catalog.DATASETS)
+    assert not collisions, f"synthetic keys must not exist for real: {collisions}"
+
+
+def test_the_synthetic_registry_is_as_well_formed_as_the_real_one():
+    """It is installed into `catalog.DATASETS`, so it meets the same rules.
+
+    A fixture the production code would reject is a fixture that proves the
+    wrong thing about the production code.
+    """
+    for key, d in synthetic.SYNTHETIC.items():
+        assert_well_formed(key, d)
+        if d.known_originator or d.known_pubdate:
+            assert d.verified_from and d.verified_on, (
+                f"{key} pins a citation fact but does not say where it was read"
+            )
 
 
 def test_a_hand_verified_pin_must_say_where_it_came_from():
@@ -41,6 +76,33 @@ def test_a_hand_verified_pin_must_say_where_it_came_from():
                 f"{key} pins a citation fact but does not say where it was read"
             )
             assert d.verified_on, f"{key} pins a citation fact but not when it was read"
+
+
+def test_the_real_registry_audits_without_crashing(tmp_path):
+    """The one test that runs the audit over the live registry.
+
+    Every other assertion about verified, unverified or untraceable state moved
+    to `tests/registry.py` in #24, and this is what would otherwise have been
+    lost with them: the audit meeting real entries, with their real mix of
+    absent licences, pinned dates and statuses nobody has resolved. That is the
+    coverage that made the five breakages informative in the first place.
+
+    What it asserts is that the audit *runs* and reports every dataset, and
+    that a row survives the trip into a manifest. Not that any layer is clean -
+    that is somebody's outstanding work, and a test demanding it would pit the
+    suite against the rule about never committing red.
+    """
+    rows = citation.audit(catalog.DATASETS, tmp_path / "empty-cache")
+
+    assert {r.key for r in rows} == set(catalog.DATASETS), "every dataset is reported"
+    for row in rows:
+        assert row.license, "a row always names a licence, even if it is UNKNOWN"
+        assert row.status in ("ready", "manual", "unverified")
+        json.dumps(row.as_dict())  # it has to reach a manifest
+
+    # The verdict is computed over the real mix too; what it *says* is a matter
+    # for whoever is finishing the licences, not for this test.
+    citation.unverified(rows)
 
 
 @pytest.mark.parametrize(
@@ -153,6 +215,28 @@ def test_a_recorded_licence_names_a_licence():
         assert any(
             token in d.license for token in ("CC-BY", "CC0", "Public Domain")
         ), f"{key} records a licence that names nothing checkable: {d.license!r}"
+
+
+def test_a_read_note_says_what_a_slow_layer_will_cost():
+    """The note is a measured fact about ds3091, not decoration.
+
+    It lived in test_study_command, where it was the fifth test asserting on a
+    real layer's registry text from a module about behaviour - and where any
+    rewording of the note would have turned correct work red. The registry is
+    this module's subject, so it belongs here; and it now asks the note to name
+    a duration rather than to contain one particular word, because "takes a
+    minute or two" and "takes 60 to 120 seconds" are the same fact.
+    """
+    noted = {k: d for k, d in catalog.DATASETS.items() if d.read_note}
+
+    assert "benthic-substrate" in noted, "ds3091 is the layer measured as slow"
+    for key, d in noted.items():
+        assert d.status == "ready", (
+            f"{key} cannot be fetched unattended, so a note about its read is decoration"
+        )
+        assert re.search(r"minute|second|hour", d.read_note), (
+            f"{key}'s note does not say what the wait is: {d.read_note!r}"
+        )
 
 
 def test_benthic_substrate_carries_its_verified_licence():

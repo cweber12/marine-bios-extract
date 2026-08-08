@@ -1,10 +1,19 @@
 """The citation audit: what is verified, what is not, and what could not be checked.
 
-Every assertion here runs against a *fixture* registry, never the real one. The
-audit's job is to report the live registry accurately, not to be satisfied by
-it - and a test that asserted the real registry was fully verified would put the
+Every assertion here runs against the synthetic registry in `tests/registry.py`,
+never the real one. Two separate reasons, and both have already bitten.
+
+The audit's job is to report the live registry accurately, not to be satisfied
+by it - a test that asserted the real registry was fully verified would put the
 suite in direct conflict with the rule against committing red, for as long as
 any layer remained unverified. The losing rule would be that one.
+
+And a real layer's licence is somebody's outstanding work, not a fixture. Three
+tests in this module used `mpa`, `shoreline` and `benthic-substrate` as stand-ins
+for "the untraceable one", "the unverified one" and "the verified one", and each
+went red the moment that work got done. The shapes they wanted are declared
+once, under names no real registry has, and the layer behind them can now change
+freely.
 """
 
 from __future__ import annotations
@@ -17,45 +26,50 @@ from biosextract import catalog, citation as citation_mod
 from biosextract.citation import UNKNOWN
 from biosextract.cli import main
 from tests.fixtures import make_archive, make_bare_archive
+from tests.registry import (
+    DEMOTED,
+    GATED,
+    PINNED,
+    UNTRACEABLE,
+    UNVERIFIED,
+    VERIFIED,
+    VERIFIED_FROM,
+    VERIFIED_ON,
+    install_synthetic_registry,  # noqa: F401 - autouse; the CLI reads the global
+    synthetic_registry,  # noqa: F401 - requested by the fixtures below
+)
 
 
 @pytest.fixture
-def registry():
-    """Two datasets: one licence a reader can trace, one absent.
+def registry(synthetic_registry):  # noqa: F811 - the fixture, not the import
+    """Two shapes: one licence a reader can trace, one absent.
 
     "Verified" means the licence *and* where someone read it. A licence with no
     provenance is a third state, and it has its own test below rather than
     hiding in this fixture.
     """
-    return {
-        "verified": replace(
-            catalog.get("mpa"),
-            key="verified",
-            license="CC-BY 4.0 (Creative Commons Attribution) - attribution required",
-            verified_from="https://example.invalid/DS582.html",
-            verified_on="2026-08-08",
-        ),
-        "unverified": replace(catalog.get("shoreline"), key="unverified", license=""),
-    }
+    return {key: synthetic_registry[key] for key in (VERIFIED, UNVERIFIED)}
 
 
-def test_a_licence_with_no_provenance_is_neither_verified_nor_absent(registry, tmp_path):
+def test_a_licence_with_no_provenance_is_neither_verified_nor_absent(
+    registry, synthetic_registry, tmp_path  # noqa: F811
+):
     """The state mpa is actually in: a claim that reads as settled.
 
     Nobody re-checks it, because nothing about it looks unfinished - which makes
-    it indistinguishable from a guess someone made years ago.
+    it indistinguishable from a guess someone made years ago. Asserted against a
+    layer this test controls, so that finishing mpa's provenance for real is not
+    a change that has to come here as well.
     """
-    registry["untraceable"] = replace(
-        catalog.get("mpa"), key="untraceable", verified_from="", verified_on=""
-    )
-    row = by_key(citation_mod.audit(registry, tmp_path / "empty-cache"))["untraceable"]
+    registry[UNTRACEABLE] = synthetic_registry[UNTRACEABLE]
+    row = by_key(citation_mod.audit(registry, tmp_path / "empty-cache"))[UNTRACEABLE]
 
     assert row.license != UNKNOWN, "the licence is recorded..."
     assert not row.clear, "...and still outstanding"
     assert any("no provenance" in p for p in row.problems)
 
 
-def cache_with(tmp_path, **archives):
+def cache_with(tmp_path, archives):
     """A cache directory laid out the way fetch() lays it out."""
     root = tmp_path / "cache"
     for key, archive in archives.items():
@@ -73,16 +87,16 @@ def by_key(rows):
 def test_reports_one_of_each(registry, tmp_path):
     rows = by_key(citation_mod.audit(registry, tmp_path / "empty-cache"))
 
-    assert rows["verified"].clear is True
-    assert rows["unverified"].clear is False
-    assert "no licence recorded" in rows["unverified"].problems[0]
+    assert rows[VERIFIED].clear is True
+    assert rows[UNVERIFIED].clear is False
+    assert "no licence recorded" in rows[UNVERIFIED].problems[0]
 
 
 def test_names_the_reason_rather_than_only_the_verdict(registry, tmp_path):
     rows = by_key(citation_mod.audit(registry, tmp_path / "empty-cache"))
 
-    assert rows["unverified"].license == UNKNOWN
-    assert any("licence" in p for p in rows["unverified"].problems)
+    assert rows[UNVERIFIED].license == UNKNOWN
+    assert any("licence" in p for p in rows[UNVERIFIED].problems)
 
 
 def test_an_absent_archive_is_a_note_not_a_problem(registry, tmp_path):
@@ -92,7 +106,7 @@ def test_an_absent_archive_is_a_note_not_a_problem(registry, tmp_path):
     machine with a cold cache, which is most machines.
     """
     rows = by_key(citation_mod.audit(registry, tmp_path / "empty-cache"))
-    row = rows["verified"]
+    row = rows[VERIFIED]
 
     assert row.clear is True
     assert row.notes and "no cached archive" in row.notes[0]
@@ -100,12 +114,12 @@ def test_an_absent_archive_is_a_note_not_a_problem(registry, tmp_path):
 
 
 def test_reads_a_cached_archive_when_there_is_one(registry, tmp_path):
-    archive = make_archive(tmp_path / "src", "ds582")
-    cache = cache_with(tmp_path, verified=archive)
+    archive = make_archive(tmp_path / "src", "ds9001")
+    cache = cache_with(tmp_path, {VERIFIED: archive})
 
-    row = by_key(citation_mod.audit(registry, cache))["verified"]
+    row = by_key(citation_mod.audit(registry, cache))[VERIFIED]
 
-    assert row.archive == "ds582.zip"
+    assert row.archive == "ds9001.zip"
     assert row.originator == "California Department of Fish and Wildlife"
     assert row.metadata_source.endswith("metadata.xml")
     assert row.clear is True
@@ -118,24 +132,43 @@ def test_an_archive_with_no_metadata_document_says_so(registry, tmp_path):
     nothing - here there is nothing to parse, and no dialect will ever change
     that, so the audit has to point at a person rather than at the bytes.
     """
-    archive = make_bare_archive(tmp_path / "src", "ds3115")
-    cache = cache_with(tmp_path, verified=archive)
+    archive = make_bare_archive(tmp_path / "src", "ds9001")
+    cache = cache_with(tmp_path, {VERIFIED: archive})
 
-    row = by_key(citation_mod.audit(registry, cache))["verified"]
+    row = by_key(citation_mod.audit(registry, cache))[VERIFIED]
 
     assert any("no metadata document" in n for n in row.notes)
     assert any("citation incomplete" in p for p in row.problems)
     assert "originator" in row.problems[0] and "publication date" in row.problems[0]
 
 
+def test_a_pin_answers_an_archive_that_carries_nothing(
+    registry, synthetic_registry, tmp_path  # noqa: F811
+):
+    """The shape most BIOS archives are in: data, and a fact a person read.
+
+    Without the pin the row above is incomplete however carefully anyone reads
+    the publisher's page, so this is the difference the pins were added to make.
+    """
+    registry[PINNED] = synthetic_registry[PINNED]
+    cache = cache_with(tmp_path, {PINNED: make_bare_archive(tmp_path / "src", "ds9004")})
+
+    row = by_key(citation_mod.audit(registry, cache))[PINNED]
+
+    assert row.originator == "Somebody At The Publisher"
+    assert row.publication_date == "2023, Mar. 8"
+    assert not any("citation incomplete" in p for p in row.problems)
+    assert row.clear is True
+
+
 def test_an_empty_metadata_document_is_not_the_same_as_none(registry, tmp_path):
     """A document that says nothing was still read; the audit should not claim
     the archive carries none, because the next question differs: chase the
     publisher for a better document, or accept there was never one."""
-    archive = make_archive(tmp_path / "src2", "ds3115", metadata=None)
-    cache = cache_with(tmp_path, verified=archive)
+    archive = make_archive(tmp_path / "src2", "ds9001", metadata=None)
+    cache = cache_with(tmp_path, {VERIFIED: archive})
 
-    row = by_key(citation_mod.audit(registry, cache))["verified"]
+    row = by_key(citation_mod.audit(registry, cache))[VERIFIED]
 
     assert row.metadata_source, "a document was read, however unhelpful"
     assert not any("no metadata document" in n for n in row.notes)
@@ -150,20 +183,20 @@ def test_the_audit_makes_no_request(registry, tmp_path, monkeypatch):
     citation_mod.audit(registry, tmp_path / "empty-cache")
 
 
-def test_the_verdict_covers_wired_up_datasets_only(registry, tmp_path):
+def test_the_verdict_covers_wired_up_datasets_only(
+    registry, synthetic_registry, tmp_path  # noqa: F811
+):
     """A gated source is not expected to be citable yet.
 
     An alarm that is always ringing for a reason nobody can act on is one
     nobody hears.
     """
-    registry["gated"] = replace(
-        catalog.get("cmecs-substrate"), key="gated", license=""
-    )
+    registry[GATED] = replace(synthetic_registry[GATED], license="")
     rows = citation_mod.audit(registry, tmp_path / "empty-cache")
 
     outstanding = [r.key for r in citation_mod.unverified(rows)]
-    assert outstanding == ["unverified"], "the gated dataset must not be counted"
-    assert not by_key(rows)["gated"].clear, "...but it is still reported"
+    assert outstanding == [UNVERIFIED], "the gated dataset must not be counted"
+    assert not by_key(rows)[GATED].clear, "...but it is still reported"
 
 
 def test_rows_are_ordered_so_two_runs_read_the_same(registry, tmp_path):
@@ -181,75 +214,44 @@ def test_a_row_serialises_for_the_manifest(registry, tmp_path):
 # --------------------------------------------------------------------------
 # the command
 # --------------------------------------------------------------------------
+# These run the real CLI, which reads `catalog.DATASETS` directly rather than
+# taking a registry the way `audit()` does - it is a CLI, and that is the
+# point. So the synthetic datasets are installed on the module by the autouse
+# fixture, and named here like any other key.
 
 
-def argv(tmp_path, *extra, datasets=("benthic-substrate",)):
+def argv(tmp_path, *extra, datasets=(VERIFIED,)):
     return ["citations", "--cache-dir", str(tmp_path / "empty-cache"), *datasets, *extra]
 
 
-@pytest.fixture
-def an_unverified_layer(monkeypatch):
-    """Make `shoreline` unverified for the duration of one test.
-
-    These two used the real `shoreline` entry because it happened to have no
-    licence - and then #19 verified it, turning correct work red. Same lesson as
-    the passing-gate test: assert what an unverified row *does*, against a
-    dataset the test controls, not against whichever real layer is behind today.
-    """
-    monkeypatch.setitem(
-        catalog.DATASETS,
-        "shoreline",
-        replace(
-            catalog.get("shoreline"),
-            license="",
-            known_originator="",
-            known_pubdate="",
-            verified_from="",
-            verified_on="",
-        ),
-    )
-
-
-def test_the_command_reports_without_check_and_succeeds(
-    tmp_path, capsys, an_unverified_layer
-):
+def test_the_command_reports_without_check_and_succeeds(tmp_path, capsys):
     """Without --check it is a report, and a report that fails your shell is a
     nuisance."""
-    code = main(argv(tmp_path, datasets=("shoreline",)))
+    code = main(argv(tmp_path, datasets=(UNVERIFIED,)))
 
     printed = capsys.readouterr().out
     assert code == 0
-    assert "shoreline" in printed
+    assert UNVERIFIED in printed
     assert "TODO" in printed, "it still says what is outstanding"
 
 
-def test_check_exits_non_zero_when_a_layer_is_unverified(
-    tmp_path, capsys, an_unverified_layer
-):
-    code = main(argv(tmp_path, "--check", datasets=("shoreline",)))
+def test_check_exits_non_zero_when_a_layer_is_unverified(tmp_path, capsys):
+    code = main(argv(tmp_path, "--check", datasets=(UNVERIFIED,)))
 
     assert code == 1
-    assert "Outstanding: shoreline" in capsys.readouterr().out
+    assert f"Outstanding: {UNVERIFIED}" in capsys.readouterr().out
 
 
-def test_check_exits_zero_when_nothing_is_outstanding(tmp_path, capsys, monkeypatch):
+def test_check_exits_zero_when_nothing_is_outstanding(tmp_path, capsys):
     """The shape of a passing gate, against a dataset this test controls.
 
-    It used to use `benthic-substrate` on the grounds that it was the one
-    verified layer - and then this branch added a rule it does not yet satisfy,
-    turning a correct change red. A gate test should assert what a clean row
-    looks like, not that a particular real layer is currently clean.
+    It used to name whichever real layer was verified at the time - first
+    `benthic-substrate`, then `benthic-substrate` again once a provenance rule
+    it did not yet meet arrived - and each time correct work turned it red. A
+    gate test asserts what a clean row looks like, not that some particular real
+    layer is clean today.
     """
-    monkeypatch.setitem(
-        catalog.DATASETS,
-        "benthic-substrate",
-        replace(
-            catalog.get("benthic-substrate"),
-            verified_from="https://filelib.wildlife.ca.gov/.../DS3091.html",
-            verified_on="2026-08-08",
-        ),
-    )
-    code = main(argv(tmp_path, "--check", datasets=("benthic-substrate",)))
+    code = main(argv(tmp_path, "--check", datasets=(VERIFIED,)))
 
     assert code == 0
     assert "Outstanding" not in capsys.readouterr().out
@@ -261,36 +263,36 @@ def test_a_licence_nobody_can_trace_is_outstanding_work(tmp_path, capsys):
     It reads as settled, so nobody re-checks it, which is indistinguishable from
     a guess made years ago.
     """
-    code = main(argv(tmp_path, "--check", datasets=("mpa",)))
+    code = main(argv(tmp_path, "--check", datasets=(UNTRACEABLE,)))
     printed = capsys.readouterr().out
 
     assert code == 1
     assert "no provenance" in printed
-    assert "Outstanding: mpa" in printed
+    assert f"Outstanding: {UNTRACEABLE}" in printed
 
 
-def test_a_traced_licence_says_where_it_was_read(tmp_path, capsys, monkeypatch):
-    monkeypatch.setitem(
-        catalog.DATASETS,
-        "mpa",
-        replace(
-            catalog.get("mpa"),
-            verified_from="https://example.invalid/DS582.html",
-            verified_on="2026-08-08",
-        ),
-    )
-    main(argv(tmp_path, datasets=("mpa",)))
+def test_a_traced_licence_says_where_it_was_read(tmp_path, capsys):
+    main(argv(tmp_path, datasets=(VERIFIED,)))
     printed = capsys.readouterr().out
 
-    assert "verified:   https://example.invalid/DS582.html on 2026-08-08" in printed
+    assert f"verified:   {VERIFIED_FROM} on {VERIFIED_ON}" in printed
     assert "no provenance" not in printed
 
 
 def test_the_command_says_it_could_not_read_an_archive_it_does_not_have(
     tmp_path, capsys
 ):
-    main(argv(tmp_path, datasets=("shoreline",)))
-    assert "no cached archive" in capsys.readouterr().out
+    """Both places it is said, because either alone survives the other's loss.
+
+    Asserting the bare phrase passed with the note suppressed and passed again
+    with the `read from` line gutted - two ways for the command to go quiet
+    about a cold cache, and one assertion that noticed neither.
+    """
+    main(argv(tmp_path, datasets=(VERIFIED,)))
+    printed = capsys.readouterr().out
+
+    assert "read from:  no cached archive" in printed
+    assert "note:       no cached archive" in printed
 
 
 def test_the_command_never_reaches_a_publisher(tmp_path, monkeypatch):
@@ -298,15 +300,15 @@ def test_the_command_never_reaches_a_publisher(tmp_path, monkeypatch):
         raise AssertionError("bios citations must not reach a publisher")
 
     monkeypatch.setattr(catalog, "_open", no_requests)
-    assert main(argv(tmp_path, datasets=("shoreline", "mpa"))) == 0
+    assert main(argv(tmp_path, datasets=(VERIFIED, UNVERIFIED))) == 0
 
 
 def test_all_includes_the_datasets_a_default_run_would_skip(tmp_path, capsys):
     main(argv(tmp_path, "--all", datasets=()))
     printed = capsys.readouterr().out
 
-    assert "state-waters" in printed, "unverified datasets are shown with --all"
-    assert "cmecs-substrate" in printed, "so are gated ones"
+    assert DEMOTED in printed, "unverified datasets are shown with --all"
+    assert GATED in printed, "so are gated ones"
     assert "[unverified]" in printed and "[manual]" in printed
 
 
@@ -314,7 +316,8 @@ def test_a_gated_dataset_is_shown_but_does_not_fail_the_gate(tmp_path, capsys):
     code = main(argv(tmp_path, "--all", "--check", datasets=()))
     printed = capsys.readouterr().out
 
-    assert "cmecs-substrate" in printed
+    assert GATED in printed
     outstanding = printed.split("Outstanding: ")[1].splitlines()[0]
-    assert "cmecs-substrate" not in outstanding
+    assert GATED not in outstanding
     assert code == 1, "...the wired-up layers still fail it"
+    assert UNVERIFIED in outstanding, "and it is this one failing it, not a real layer"

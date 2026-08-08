@@ -21,7 +21,17 @@ import pytest
 
 from biosextract import studies, studyrun
 from biosextract.cli import main
-from tests.fixtures import make_archive, make_cluster_archive, make_raster_archive
+from tests.fixtures import (
+    make_archive,
+    make_bare_archive,
+    make_cluster_archive,
+    make_raster_archive,
+)
+from tests.registry import (
+    CONSTRAINTS,
+    VERIFIED,
+    install_synthetic_registry,  # noqa: F401 - autouse; the study run reads the global
+)
 from tests.test_studies import REFERENCE_STATIONS, write_study
 
 
@@ -55,7 +65,13 @@ def cache_dir(tmp_path):
     return tmp_path / "repo-cache"
 
 
-def study_argv(studies_root, cache_dir, archive, *extra, study="latest", pad="5"):
+def study_argv(studies_root, cache_dir, archive, *extra, study="latest", pad="5", key="mpa"):
+    """Argv for one study run. ``key`` names the layer, and nothing more.
+
+    Naming a real key is a contract - `mpa` exists and is `ready` - so these
+    runs stay as they are. A test that wants to assert on what the *registry*
+    says passes a synthetic key instead; see #24.
+    """
     return [
         "study",
         "--studies-root",
@@ -65,9 +81,9 @@ def study_argv(studies_root, cache_dir, archive, *extra, study="latest", pad="5"
         "--pad-km",
         pad,
         "--datasets",
-        "mpa",
+        key,
         "--local-archive",
-        f"mpa={archive}",
+        f"{key}={archive}",
         "--cache-dir",
         str(cache_dir),
         "--yes",
@@ -169,13 +185,25 @@ def test_the_box_in_the_manifest_is_the_box_the_geojson_declares(
 
 
 def test_publisher_use_constraints_are_printed_during_the_run(
-    studies_root, cache_dir, mpa_archive, capsys
+    studies_root, cache_dir, tmp_path, capsys
 ):
-    main(study_argv(studies_root, cache_dir, mpa_archive))
+    """The registry's constraint, on an archive that carries none of its own.
+
+    This asserted `mpa`'s wording, which #20 is about to rewrite - and it could
+    not even tell whether it was reading the registry or the fixture archive,
+    since both carry the navigational-use sentence. So it is pinned to a
+    synthetic layer, and to the case where the registry is the only source
+    there is: most BIOS archives ship data and no metadata document at all.
+
+    The other direction - an archive's own constraint reaching the output, and
+    beating the registry - is test_citation's end-to-end run.
+    """
+    archive = make_bare_archive(tmp_path / "archives", "ds9001")
+    main(study_argv(studies_root, cache_dir, archive, key=VERIFIED))
 
     printed = capsys.readouterr().out
     assert "use constraint:" in printed
-    assert "not intended for navigational use" in printed
+    assert CONSTRAINTS in printed
 
 
 def test_the_run_writes_no_escape_sequences(studies_root, cache_dir, mpa_archive, capsys):
@@ -944,15 +972,6 @@ def test_a_slow_layer_says_it_is_reading_before_the_pause(
     assert expansion_line < printed.index("features kept"), (
         "the warning is worth nothing after the wait it explains"
     )
-
-
-def test_the_slow_layer_in_the_registry_is_the_one_that_is_slow():
-    """The note is a measured fact about ds3091, not decoration."""
-    from biosextract import catalog
-
-    noted = {k for k, d in catalog.DATASETS.items() if d.read_note}
-    assert noted == {"benthic-substrate"}
-    assert "minute" in catalog.get("benthic-substrate").read_note
 
 
 def test_an_ambiguous_archive_refuses_with_advice_this_command_can_take(
