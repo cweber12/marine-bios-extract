@@ -21,15 +21,38 @@ from tests.fixtures import make_archive, make_bare_archive
 
 @pytest.fixture
 def registry():
-    """Two datasets: one with a licence recorded, one with nothing."""
+    """Two datasets: one licence a reader can trace, one absent.
+
+    "Verified" means the licence *and* where someone read it. A licence with no
+    provenance is a third state, and it has its own test below rather than
+    hiding in this fixture.
+    """
     return {
         "verified": replace(
             catalog.get("mpa"),
             key="verified",
             license="CC-BY 4.0 (Creative Commons Attribution) - attribution required",
+            verified_from="https://example.invalid/DS582.html",
+            verified_on="2026-08-08",
         ),
         "unverified": replace(catalog.get("shoreline"), key="unverified", license=""),
     }
+
+
+def test_a_licence_with_no_provenance_is_neither_verified_nor_absent(registry, tmp_path):
+    """The state mpa is actually in: a claim that reads as settled.
+
+    Nobody re-checks it, because nothing about it looks unfinished - which makes
+    it indistinguishable from a guess someone made years ago.
+    """
+    registry["untraceable"] = replace(
+        catalog.get("mpa"), key="untraceable", verified_from="", verified_on=""
+    )
+    row = by_key(citation_mod.audit(registry, tmp_path / "empty-cache"))["untraceable"]
+
+    assert row.license != UNKNOWN, "the licence is recorded..."
+    assert not row.clear, "...and still outstanding"
+    assert any("no provenance" in p for p in row.problems)
 
 
 def cache_with(tmp_path, **archives):
@@ -182,13 +205,58 @@ def test_check_exits_non_zero_when_a_layer_is_unverified(tmp_path, capsys):
     assert "Outstanding: shoreline" in capsys.readouterr().out
 
 
-def test_check_exits_zero_when_nothing_is_outstanding(tmp_path, capsys):
-    """benthic-substrate is the one layer verified so far; when the rest catch
-    up, this is the shape of a passing gate."""
+def test_check_exits_zero_when_nothing_is_outstanding(tmp_path, capsys, monkeypatch):
+    """The shape of a passing gate, against a dataset this test controls.
+
+    It used to use `benthic-substrate` on the grounds that it was the one
+    verified layer - and then this branch added a rule it does not yet satisfy,
+    turning a correct change red. A gate test should assert what a clean row
+    looks like, not that a particular real layer is currently clean.
+    """
+    monkeypatch.setitem(
+        catalog.DATASETS,
+        "benthic-substrate",
+        replace(
+            catalog.get("benthic-substrate"),
+            verified_from="https://filelib.wildlife.ca.gov/.../DS3091.html",
+            verified_on="2026-08-08",
+        ),
+    )
     code = main(argv(tmp_path, "--check", datasets=("benthic-substrate",)))
 
     assert code == 0
     assert "Outstanding" not in capsys.readouterr().out
+
+
+def test_a_licence_nobody_can_trace_is_outstanding_work(tmp_path, capsys):
+    """mpa's case: a CC-BY claim recorded before provenance was recorded.
+
+    It reads as settled, so nobody re-checks it, which is indistinguishable from
+    a guess made years ago.
+    """
+    code = main(argv(tmp_path, "--check", datasets=("mpa",)))
+    printed = capsys.readouterr().out
+
+    assert code == 1
+    assert "no provenance" in printed
+    assert "Outstanding: mpa" in printed
+
+
+def test_a_traced_licence_says_where_it_was_read(tmp_path, capsys, monkeypatch):
+    monkeypatch.setitem(
+        catalog.DATASETS,
+        "mpa",
+        replace(
+            catalog.get("mpa"),
+            verified_from="https://example.invalid/DS582.html",
+            verified_on="2026-08-08",
+        ),
+    )
+    main(argv(tmp_path, datasets=("mpa",)))
+    printed = capsys.readouterr().out
+
+    assert "verified:   https://example.invalid/DS582.html on 2026-08-08" in printed
+    assert "no provenance" not in printed
 
 
 def test_the_command_says_it_could_not_read_an_archive_it_does_not_have(

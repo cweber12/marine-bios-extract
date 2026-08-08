@@ -176,6 +176,9 @@ def cmd_citations(args) -> int:
         print(f"      cite as:    {row.originator} ({row.publication_date})")
         source = row.metadata_source or ("archive not read" if not row.archive else "none")
         print(f"      read from:  {row.archive or 'no cached archive'} - {source}")
+        if row.verified_from:
+            when = f" on {row.verified_on}" if row.verified_on else ""
+            print(f"      verified:   {row.verified_from}{when}")
         for problem in row.problems:
             print(f"      TODO:       {problem}")
         for note in row.notes:

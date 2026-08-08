@@ -406,6 +406,9 @@ class AuditRow:
     license: str = UNKNOWN
     originator: str = UNKNOWN
     publication_date: str = UNKNOWN
+    #: Where a person read the registry's values, and when.
+    verified_from: str = ""
+    verified_on: str = ""
     #: Cached archive inspected, if there was one to inspect.
     archive: str = ""
     #: Member the citation was read from, if the archive carried one.
@@ -427,6 +430,8 @@ class AuditRow:
             "originator": self.originator,
             "publication_date": self.publication_date,
             "archive": self.archive,
+            "verified_from": self.verified_from,
+            "verified_on": self.verified_on,
             "metadata_source": self.metadata_source,
             "problems": list(self.problems),
             "notes": list(self.notes),
@@ -462,6 +467,8 @@ def audit(datasets: dict, cache_dir: Path) -> list[AuditRow]:
             title=dataset.title,
             status=dataset.status,
             license=dataset.license or UNKNOWN,
+            verified_from=dataset.verified_from,
+            verified_on=dataset.verified_on,
         )
 
         archive = cached_archive(cache_dir, key)
@@ -506,6 +513,14 @@ def audit(datasets: dict, cache_dir: Path) -> list[AuditRow]:
 
         if row.license == UNKNOWN:
             row.problems.append("no licence recorded, and none read from the archive")
+        elif dataset.license and not dataset.verified_from:
+            # A recorded licence nobody can trace is the failure mode this whole
+            # exercise is about. It reads as settled, so nobody re-checks it,
+            # and it is indistinguishable from a guess made years ago.
+            row.problems.append(
+                "licence recorded with no provenance: nothing says which page it "
+                "was read from, so nobody can re-check it"
+            )
 
         rows.append(row)
     return rows
