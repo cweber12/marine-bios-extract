@@ -10,18 +10,50 @@ from __future__ import annotations
 import pytest
 
 from biosextract import catalog
+from tests import registry as synthetic
+
+
+def assert_well_formed(key, d):
+    """The shape every registry entry must have, real or synthetic."""
+    assert d.key == key, "registry key and dataset.key must match"
+    assert d.kind in ("vector", "raster")
+    assert d.status in ("ready", "manual", "unverified")
+    assert d.provider in ("bios", "pmep", "usgs", "fema")
+    if d.provider == "bios":
+        assert d.dataset_id, f"{key} is a BIOS dataset but has no ds id"
+    if d.status != "ready":
+        assert d.landing_url, f"{key} is not automatic, so it must say where to go"
 
 
 def test_every_registered_dataset_is_self_consistent():
     for key, d in catalog.DATASETS.items():
-        assert d.key == key, "registry key and dataset.key must match"
-        assert d.kind in ("vector", "raster")
-        assert d.status in ("ready", "manual", "unverified")
-        assert d.provider in ("bios", "pmep", "usgs", "fema")
-        if d.provider == "bios":
-            assert d.dataset_id, f"{key} is a BIOS dataset but has no ds id"
-        if d.status != "ready":
-            assert d.landing_url, f"{key} is not automatic, so it must say where to go"
+        assert_well_formed(key, d)
+
+
+def test_the_synthetic_registry_collides_with_no_real_key():
+    """`tests/registry.py` owns the content assertions; it must own its keys too.
+
+    A synthetic key that shadowed a real one would let a test that still
+    reaches for real content pass quietly against a substitute, instead of
+    dying with the KeyError that says so. That is the same class of bug as the
+    five in-place fixes this registry replaces, in a form nobody would notice.
+    """
+    collisions = set(synthetic.SYNTHETIC) & set(catalog.DATASETS)
+    assert not collisions, f"synthetic keys must not exist for real: {collisions}"
+
+
+def test_the_synthetic_registry_is_as_well_formed_as_the_real_one():
+    """It is installed into `catalog.DATASETS`, so it meets the same rules.
+
+    A fixture the production code would reject is a fixture that proves the
+    wrong thing about the production code.
+    """
+    for key, d in synthetic.SYNTHETIC.items():
+        assert_well_formed(key, d)
+        if d.known_originator or d.known_pubdate:
+            assert d.verified_from and d.verified_on, (
+                f"{key} pins a citation fact but does not say where it was read"
+            )
 
 
 def test_a_hand_verified_pin_must_say_where_it_came_from():
