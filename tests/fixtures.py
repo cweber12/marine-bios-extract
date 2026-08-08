@@ -209,30 +209,67 @@ def make_archive(
     return archive
 
 
-def make_geodatabase(directory: Path, layer: str = "ds391") -> Path:
+def make_geodatabase(
+    directory: Path,
+    layer: str = "ds391",
+    fields: list[str] | None = None,
+    values: list | None = None,
+) -> Path:
     """A real file geodatabase holding the same three polygons as the shapefile.
 
     Written with GDAL's OpenFileGDB driver, which is also what reads the BIOS
     archives that ship a ``.gdb``, so the fixture exercises the same path a real
     download does.
+
+    ``fields`` and ``values`` override the default ``Sub``/``Acres`` schema, for
+    layers whose precomputed geometry fields are named something else. The names
+    are the part the clip code depends on - it renames and recomputes whatever
+    the registry declares - so a fixture that cannot carry a layer's real field
+    names cannot test that layer's declaration.
     """
     directory = Path(directory)
     directory.parent.mkdir(parents=True, exist_ok=True)
     geoms = [to_albers(g) for g in (INSIDE, STRADDLE, OUTSIDE)]
+    if fields is None:
+        fields = ["Sub", "Acres"]
+        values = [
+            np.array(["Hard", "Extent", "Hard"], dtype=object),
+            np.array([100.0, 200.0, 300.0]),
+        ]
     raw.write(
         str(directory),
         np.array([to_wkb(g) for g in geoms], dtype=object),
-        [
-            np.array(["Hard", "Extent", "Hard"], dtype=object),
-            np.array([100.0, 200.0, 300.0]),
-        ],
-        fields=["Sub", "Acres"],
+        values,
+        fields=fields,
         geometry_type="Polygon",
         crs=ALBERS,
         driver="OpenFileGDB",
         layer=layer,
     )
     return directory
+
+
+def make_gdb_archive(
+    tmp_path: Path,
+    dataset_id: str,
+    fields: list[str] | None = None,
+    values: list | None = None,
+) -> Path:
+    """``ds<N>.zip`` holding one ``.gdb`` and no metadata document.
+
+    The shape ds3135 and ds1503 actually ship: a single-layer geodatabase at the
+    archive root, and nothing describing it. Their citations therefore come from
+    the registry pins or from nowhere, which is what makes the pins load-bearing
+    rather than a convenience.
+    """
+    stage = Path(tmp_path) / f"{dataset_id}_stage"
+    gdb = make_geodatabase(stage / f"{dataset_id}.gdb", layer=dataset_id, fields=fields, values=values)
+
+    archive = Path(tmp_path) / f"{dataset_id}.zip"
+    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zf:
+        for fname in sorted(os.listdir(gdb)):
+            zf.write(gdb / fname, f"{dataset_id}.gdb/{fname}")
+    return archive
 
 
 def make_two_gdb_archive(

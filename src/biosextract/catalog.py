@@ -361,6 +361,38 @@ DATASETS: dict[str, Dataset] = {
             "takes a minute or two"
         ),
     ),
+    "admin-kelp-beds": Dataset(
+        key="admin-kelp-beds",
+        title="Administrative Kelp Beds",
+        provider="bios",
+        kind="vector",
+        dataset_id="ds3135",
+        geometry_fields=("Shape_Length", "Shape_Area"),
+        license=CC_BY_4,
+        use_constraints=CC_BY_4_CONSTRAINTS,
+        # DS3135.html names no Originator, and its Point of Contact is a person
+        # (Rebecca Flores Miller, Environmental Scientist). Crediting her would
+        # credit the wrong role, the same call saline-wetlands made, so the
+        # citation takes the Credits line verbatim - which is the field whose
+        # whole job is to say who to attribute.
+        known_originator="California Department of Fish and Wildlife, Marine Region GIS Laboratory",
+        # No known_pubdate, and not an oversight. DS3115.html carries an
+        # explicit "Publication date" field, which is where shoreline's pin came
+        # from; DS3135.html has no such field. Its only dates are ArcGIS item
+        # timestamps - "Last update" 2024-01-11, geoprocessing lineage the same
+        # day - and a processing timestamp is not a publication date. Recording
+        # one would be inventing attribution, so the citation reports itself
+        # incomplete instead. See the notes.
+        verified_from="https://filelib.wildlife.ca.gov/Public/BDB/GIS/BIOS/metadata/DS3135.html",
+        verified_on=_VERIFIED_ON,
+        notes=(
+            "87 beds designated under Title 14 for managing commercial kelp "
+            "harvest, each open, closed, leasable or leased. Regulatory rather "
+            "than ecological: it says who may harvest where, not where kelp is. "
+            "The publisher states no publication date, so the citation needs a "
+            "date from CDFW (geodata@wildlife.ca.gov) before it is complete."
+        ),
+    ),
     # ---- CDFW BIOS, raster ------------------------------------------------
     "kelp-persistence": Dataset(
         key="kelp-persistence",
