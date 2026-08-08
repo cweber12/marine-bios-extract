@@ -305,6 +305,22 @@ DATASETS: dict[str, Dataset] = {
         kind="vector",
         dataset_id="ds2864",
         geometry_fields=("Acres", "Hectares", "Shape_Area"),
+        license=CC_BY_4,
+        use_constraints=CC_BY_4_CONSTRAINTS,
+        # The one page of the five that names an Originator outright, which is
+        # the first thing CDFW's citing rule asks for. It is the department, not
+        # a person: Melanie Gogol-Prokurat appears beside it as point of
+        # contact, and citing her would be crediting the wrong role.
+        known_originator="California Department of Fish and Wildlife",
+        known_pubdate="2017-10-26",
+        verified_from="https://filelib.wildlife.ca.gov/Public/BDB/GIS/BIOS/metadata/DS2864.html",
+        verified_on=_VERIFIED_ON,
+        notes=(
+            "Areas of Conservation Emphasis (ACE) product, credited to the "
+            "'ACE 3 Working Group and ACE 3 Development Team'. Published "
+            "2017-10-26, revised 2020-02-11; the citation takes the publication "
+            "date, which is what BIOS asks for."
+        ),
     ),
     "benthic-substrate": Dataset(
         key="benthic-substrate",
