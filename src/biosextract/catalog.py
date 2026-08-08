@@ -361,6 +361,15 @@ DATASETS: dict[str, Dataset] = {
         provider="bios",
         kind="raster",
         dataset_id="ds3151",
+        license=CC_BY_4,
+        use_constraints=CC_BY_4_CONSTRAINTS,
+        # DS3151.html is the odd one out: an FGDC-style page rather than the
+        # ArcGIS layout the other four use. Same facts, different labels - no
+        # Originator element, so the citation again takes the Contact Person.
+        known_originator="Marine Region GIS",
+        known_pubdate="2024-02-02",
+        verified_from="https://filelib.wildlife.ca.gov/Public/BDB/GIS/BIOS/metadata/DS3151.html",
+        verified_on=_VERIFIED_ON,
         notes=(
             "5 m grid, count of years kelp canopy was observed across the "
             "2002-2016 survey series. Subject overlaps kelp-density-extract, "
