@@ -51,6 +51,60 @@ def test_ambiguity_is_reported_not_guessed(tmp_path):
     assert "quality" in chosen.member
 
 
+def test_unreadable_member_does_not_create_an_ambiguity(tmp_path, capsys):
+    """ds3091.zip in miniature: two .gdb members, one of which no driver opens.
+
+    Classified on filename that is two datasets and a refusal. Opened, there is
+    exactly one, and the layer must resolve with no hint at all.
+    """
+    from tests.fixtures import make_two_gdb_archive
+
+    zip_path = make_two_gdb_archive(tmp_path)
+
+    payload = archive_mod.select(zip_path, "vector")
+    assert payload.member == "v1_final/ds3091_vector.gdb"
+    assert payload.fmt == "filegdb"
+
+    out = capsys.readouterr().out
+    assert "v1_final/ds3091.gdb" in out, "a skipped member must be named, not dropped"
+    assert "skipping" in out
+
+
+def test_inspect_still_lists_the_member_that_will_not_open(tmp_path):
+    """The listing is a listing. Only `select` judges what opens."""
+    from tests.fixtures import make_two_gdb_archive
+
+    members = [p.member for p in archive_mod.inspect(make_two_gdb_archive(tmp_path))]
+    assert "v1_final/ds3091.gdb" in members
+    assert "v1_final/ds3091_vector.gdb" in members
+
+
+def test_probe_names_the_drivers_reason(tmp_path):
+    from tests.fixtures import make_two_gdb_archive
+
+    payloads = archive_mod.inspect(make_two_gdb_archive(tmp_path))
+    broken = next(p for p in payloads if p.member == "v1_final/ds3091.gdb")
+    good = next(p for p in payloads if p.member.endswith("_vector.gdb"))
+
+    assert archive_mod.opens(good) is None
+    reason = archive_mod.opens(broken)
+    assert reason and "Error" in reason, f"expected a driver reason, got {reason!r}"
+
+
+def test_an_archive_whose_candidates_all_fail_says_so(tmp_path):
+    """Not 'no vector data' - the members are there, they just do not open."""
+    zip_path = tmp_path / "broken.zip"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        for gdb in ("one.gdb", "two.gdb"):
+            zf.writestr(f"{gdb}/a00000001.gdbtable", b"not a geodatabase")
+
+    with pytest.raises(archive_mod.ArchiveError) as exc:
+        archive_mod.select(zip_path, "vector", verbose=False)
+    message = str(exc.value)
+    assert "not one of them opens" in message
+    assert "one.gdb" in message and "two.gdb" in message
+
+
 def test_file_geodatabase_registered_once(tmp_path):
     zip_path = tmp_path / "gdb.zip"
     with zipfile.ZipFile(zip_path, "w") as zf:

@@ -9,6 +9,13 @@ may hold a plain shapefile, a file geodatabase, an Esri GRID raster stored as a
 directory of ``.adf`` files, or a GeoTIFF - sometimes several, alongside PDFs
 and metadata. Classification is therefore explicit and, when it is ambiguous,
 reported rather than resolved by picking the first match.
+
+Classification by filename is a *claim*, not a fact. ``ds3091.zip`` ships two
+``.gdb`` directories and only one of them opens; counting the broken one made
+the archive look ambiguous and put a real layer out of reach entirely. So when
+more than one candidate survives, each is asked to open before it is allowed to
+create an ambiguity, and anything the driver rejects is named with its reason
+rather than dropped in silence.
 """
 
 from __future__ import annotations
@@ -128,13 +135,67 @@ def inspect(archive: Path) -> list[Payload]:
     return sorted(payloads, key=lambda p: p.member.lower())
 
 
-def select(archive: Path, kind: str, layer_hint: str | None = None) -> Payload:
+def opens(payload: Payload) -> str | None:
+    """``None`` if the driver can open ``payload``, else the reason it cannot.
+
+    Only the container is opened - layer names for a vector, band count for a
+    raster - so nothing is read and the probe costs a header, not a scan. A
+    dataset that opens with no layers or no bands counts as unreadable too: it
+    is a directory the classifier recognised, not data anyone can use.
+    """
+    try:
+        if payload.kind == "vector":
+            from pyogrio import list_layers
+
+            if len(list_layers(payload.vsi_path)) == 0:
+                return "opens, but declares no layers"
+        else:
+            import rasterio
+
+            with rasterio.open(payload.vsi_path) as src:
+                if src.count == 0:
+                    return "opens, but has no raster bands"
+    except Exception as exc:  # noqa: BLE001 - driver failures are many and varied
+        first = str(exc).strip().splitlines()[0] if str(exc).strip() else ""
+        return f"{type(exc).__name__}: {first}" if first else type(exc).__name__
+    return None
+
+
+def readable(
+    payloads: list[Payload], verbose: bool = True
+) -> tuple[list[Payload], dict[str, str]]:
+    """Split candidates into those that open and those that do not.
+
+    Returns the survivors and a ``member -> reason`` map of what was rejected.
+    Callers report the map; nothing is discarded quietly, because a member that
+    silently vanishes looks exactly like one that was never in the archive.
+    """
+    good: list[Payload] = []
+    rejected: dict[str, str] = {}
+    for p in payloads:
+        reason = opens(p)
+        if reason is None:
+            good.append(p)
+        else:
+            rejected[p.member] = reason
+            if verbose:
+                print(f"    skipping {p.member}: {reason}")
+    return good, rejected
+
+
+def select(
+    archive: Path, kind: str, layer_hint: str | None = None, verbose: bool = True
+) -> Payload:
     """Pick the single payload of ``kind`` to read, or explain why it cannot.
 
     An archive with two shapefiles and no hint is genuinely ambiguous, and
     quietly taking the first would be the kind of plausible-but-wrong choice
     this repo family is built to avoid. The error lists the candidates so the
     caller can name one.
+
+    Ambiguity is only ever declared over members that actually open. The probe
+    runs solely when a choice has to be made, so the ordinary one-payload
+    archive still costs nothing but a listing.
     """
     payloads = [p for p in inspect(archive) if p.kind == kind]
     if not payloads:
@@ -162,13 +223,39 @@ def select(archive: Path, kind: str, layer_hint: str | None = None) -> Payload:
     if len(payloads) == 1:
         return payloads[0]
 
+    # More than one candidate by name. Before calling that a conflict, make each
+    # one prove it opens: ds3091.zip's two .gdb directories are one dataset and
+    # one that no driver recognises.
+    survivors, rejected = readable(payloads, verbose=verbose)
+
+    if len(survivors) == 1:
+        return survivors[0]
+
+    if not survivors:
+        raise ArchiveError(
+            "%s contains %d %s dataset(s) by name, and not one of them opens:\n  %s"
+            % (
+                Path(archive).name,
+                len(payloads),
+                kind,
+                "\n  ".join(f"{member} - {reason}" for member, reason in rejected.items()),
+            )
+        )
+
     raise ArchiveError(
-        "%s contains %d %s datasets and no unambiguous choice:\n  %s\n"
-        "Name one with --layer."
+        "%s contains %d readable %s datasets and no unambiguous choice:\n  %s\n%s%s"
         % (
             Path(archive).name,
-            len(payloads),
+            len(survivors),
             kind,
-            "\n  ".join(str(p) for p in payloads),
+            "\n  ".join(str(p) for p in survivors),
+            (
+                "(skipped, will not open: "
+                + "; ".join(f"{m} - {r}" for m, r in rejected.items())
+                + ")\n"
+                if rejected
+                else ""
+            ),
+            "Name one with --layer.",
         )
     )

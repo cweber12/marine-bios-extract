@@ -182,6 +182,61 @@ def make_archive(
     return archive
 
 
+def make_geodatabase(directory: Path, layer: str = "ds391") -> Path:
+    """A real file geodatabase holding the same three polygons as the shapefile.
+
+    Written with GDAL's OpenFileGDB driver, which is also what reads the BIOS
+    archives that ship a ``.gdb``, so the fixture exercises the same path a real
+    download does.
+    """
+    directory = Path(directory)
+    directory.parent.mkdir(parents=True, exist_ok=True)
+    geoms = [to_albers(g) for g in (INSIDE, STRADDLE, OUTSIDE)]
+    raw.write(
+        str(directory),
+        np.array([to_wkb(g) for g in geoms], dtype=object),
+        [
+            np.array(["Hard", "Extent", "Hard"], dtype=object),
+            np.array([100.0, 200.0, 300.0]),
+        ],
+        fields=["Sub", "Acres"],
+        geometry_type="Polygon",
+        crs=ALBERS,
+        driver="OpenFileGDB",
+        layer=layer,
+    )
+    return directory
+
+
+def make_two_gdb_archive(
+    tmp_path: Path, dataset_id: str = "ds3091", metadata: str | None = FGDC_METADATA
+) -> Path:
+    """``ds3091.zip`` in miniature: two ``.gdb`` members, only one of which opens.
+
+    The real archive ships ``v1_final/ds3091.gdb`` - which no driver recognises -
+    beside ``v1_final/ds3091_vector.gdb``, which holds the layer. Classified on
+    filename alone that reads as two datasets and an ambiguity; opened, it is one
+    dataset. The broken member here is a directory of plausible-looking
+    ``.gdbtable`` junk, exactly what the name-based classifier accepts.
+
+    Note the shorter name is the *unreadable* one, so a hint of ``ds3091`` must
+    be able to reach a member whose name is a prefix of its neighbour's.
+    """
+    stage = Path(tmp_path) / f"{dataset_id}_two_gdb"
+    good = make_geodatabase(stage / "v1_final" / f"{dataset_id}_vector.gdb")
+
+    archive = Path(tmp_path) / f"{dataset_id}.zip"
+    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zf:
+        for fname in sorted(os.listdir(good)):
+            zf.write(good / fname, f"v1_final/{dataset_id}_vector.gdb/{fname}")
+        # The member that will not open: right shape, wrong bytes.
+        for fname in ("a00000001.gdbtable", "a00000001.gdbtablx", "gdb"):
+            zf.writestr(f"v1_final/{dataset_id}.gdb/{fname}", b"not a geodatabase")
+        if metadata:
+            zf.writestr(f"{dataset_id}/metadata.xml", metadata)
+    return archive
+
+
 def make_raster_archive(tmp_path: Path, dataset_id: str = "ds3151") -> Path:
     """A GeoTIFF in Albers, zipped, standing in for Kelp Persistence."""
     import rasterio
