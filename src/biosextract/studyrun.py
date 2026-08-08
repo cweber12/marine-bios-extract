@@ -496,6 +496,8 @@ def stage_execute(state: RunState) -> tuple[RunState, dict]:
                 accessed=run_date,
                 known_license=dataset.license,
                 known_constraints=dataset.use_constraints,
+                known_originator=dataset.known_originator,
+                known_pubdate=dataset.known_pubdate,
                 metadata_page=catalog.metadata_url(dataset) or "",
             )
             state.citations.append(cite)

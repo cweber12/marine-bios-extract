@@ -139,6 +139,22 @@ class Dataset:
     #: Publisher's stated limits on use. Printed during extraction when set,
     #: because a constraint nobody reads protects nobody.
     use_constraints: str = ""
+    #: Citation facts a person read off the publisher's page, for archives that
+    #: carry no metadata document at all - which is most of them. ds582, ds3115
+    #: and ds3158 ship data and nothing else, so without these their citation
+    #: can never be completed by any amount of parsing.
+    #:
+    #: Used **only** when the archive is silent. Where the bytes speak they win,
+    #: for the reason they always do: a pin keeps asserting a 2023 contact after
+    #: a 2027 republication, and nothing notices.
+    known_originator: str = ""
+    known_pubdate: str = ""
+    #: Where a person read the values above, and when. A pin without provenance
+    #: is folklore in a citation format: nobody can re-check it, so it hardens
+    #: by age instead of by evidence. Required alongside any pin - see the
+    #: registry self-consistency test.
+    verified_from: str = ""
+    verified_on: str = ""
     #: "ready"      wired up and fetchable unattended
     #: "manual"     published behind a form; needs --local-archive
     #: "unverified" declared, but not confirmed against the publisher - either

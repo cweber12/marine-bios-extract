@@ -24,6 +24,25 @@ def test_every_registered_dataset_is_self_consistent():
             assert d.landing_url, f"{key} is not automatic, so it must say where to go"
 
 
+def test_a_hand_verified_pin_must_say_where_it_came_from():
+    """A pin without provenance is folklore in a citation format.
+
+    Nobody can re-check it, so it hardens by age rather than by evidence. The
+    guard covers the citation pins because those are what this rule was written
+    with; `license` is deliberately not covered *yet*, because `mpa` carries one
+    recorded before any of this existed and nobody now knows which page it came
+    from. Extending the guard to licences today would make this suite red until
+    a human resolves that (#20), and §1.7 forbids committing red - so the audit
+    reports it instead, which is visible without being a lie.
+    """
+    for key, d in catalog.DATASETS.items():
+        if d.known_originator or d.known_pubdate:
+            assert d.verified_from, (
+                f"{key} pins a citation fact but does not say where it was read"
+            )
+            assert d.verified_on, f"{key} pins a citation fact but not when it was read"
+
+
 @pytest.mark.parametrize(
     "dataset_id,bucket",
     [

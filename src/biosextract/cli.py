@@ -176,6 +176,9 @@ def cmd_citations(args) -> int:
         print(f"      cite as:    {row.originator} ({row.publication_date})")
         source = row.metadata_source or ("archive not read" if not row.archive else "none")
         print(f"      read from:  {row.archive or 'no cached archive'} - {source}")
+        if row.verified_from:
+            when = f" on {row.verified_on}" if row.verified_on else ""
+            print(f"      verified:   {row.verified_from}{when}")
         for problem in row.problems:
             print(f"      TODO:       {problem}")
         for note in row.notes:
@@ -274,6 +277,8 @@ def cmd_extract(args) -> int:
                 accessed=run_date,
                 known_license=dataset.license,
                 known_constraints=dataset.use_constraints,
+                known_originator=dataset.known_originator,
+                known_pubdate=dataset.known_pubdate,
                 metadata_page=catalog.metadata_url(dataset) or "",
             )
             citations.append(cite)

@@ -324,6 +324,18 @@ anything, so it says what it could not see rather than downloading to find out.
 A layer it has no archive for is a `note`, not a `TODO`: the answer to "never
 downloaded" is a fetch, not a verification.
 
+**A recorded fact has to say where it came from.** Where an archive carries no
+metadata — most of them — the citation comes from a page a person read, recorded
+in the registry as `known_originator` / `known_pubdate` with `verified_from` and
+`verified_on` beside it. The audit prints that provenance, and counts a licence
+without any as outstanding: a claim nobody can trace reads as settled, so nobody
+re-checks it, which makes it indistinguishable from a guess made years ago.
+
+Where the archive *does* speak, it wins over anything recorded by hand — a pin
+would otherwise go on asserting a 2023 contact after a 2027 republication, and
+nothing would notice. Every field records which of the two it came from, and the
+manifest carries that under `field_sources`.
+
 Provenance also travels inside the files themselves, so credit survives being
 copied out of the folder:
 
