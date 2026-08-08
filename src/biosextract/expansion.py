@@ -551,7 +551,7 @@ def stage(state) -> tuple[object, dict]:
     named entry in the report; the box then settles on the layers that could be.
     """
     from . import catalog, studyrun
-    from .archive import select as select_payload
+    from .archive import select as select_payload, study_advice
 
     request = state.request
     if not request.expand:
@@ -599,7 +599,9 @@ def stage(state) -> tuple[object, dict]:
         dataset = catalog.get(key)
         try:
             archive = studyrun.acquire(state, dataset, verbose=True)
-            payload = select_payload(archive.path, dataset.kind, dataset.layer)
+            payload = select_payload(
+                archive.path, dataset.kind, dataset.layer, advice=study_advice(key)
+            )
             layers.append(read_window(payload.vsi_path, limit, key, layer=None))
         except Exception as exc:  # noqa: BLE001 - a layer we cannot read is not fatal
             unread[key] = f"{type(exc).__name__}: {exc}"

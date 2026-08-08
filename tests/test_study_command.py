@@ -916,6 +916,45 @@ def test_an_unreadable_layer_does_not_sink_the_run(
     assert report["moved"] is True
 
 
+def test_an_ambiguous_archive_refuses_with_advice_this_command_can_take(
+    studies_root, cache_dir, tmp_path, capsys
+):
+    """`bios study` has no --layer flag, so its refusal must not demand one.
+
+    An unfollowable instruction is worse than none: it sends the reader looking
+    for a flag that was never there instead of at the two ways out that exist.
+    """
+    from biosextract.cli import build_parser
+    from tests.fixtures import make_ambiguous_archive
+
+    ambiguous = make_ambiguous_archive(tmp_path / "archives")
+    code = main(
+        [
+            "study",
+            "--studies-root", str(studies_root),
+            "--study", "latest",
+            "--pad-km", "5",
+            "--datasets", "mpa",
+            "--local-archive", f"mpa={ambiguous}",
+            "--cache-dir", str(cache_dir),
+            "--yes",
+        ]
+    )
+
+    assert code == 1, "a genuine ambiguity still refuses rather than guessing"
+    printed = capsys.readouterr().out
+    assert "no unambiguous choice" in printed
+    assert "bios extract --datasets mpa --layer" in printed
+    assert "catalog.py" in printed, "the registry pin is the other way out"
+    assert "Name one with --layer." not in printed
+
+    # And the flag the advice does not mention is indeed absent here.
+    study_parser = build_parser()._subparsers._group_actions[0].choices["study"]
+    assert "--layer" not in {
+        opt for action in study_parser._actions for opt in action.option_strings
+    }
+
+
 # --------------------------------------------------------------------------
 # the two extension points
 # --------------------------------------------------------------------------

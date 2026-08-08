@@ -39,6 +39,25 @@ class ArchiveError(RuntimeError):
     """Raised when an archive holds nothing readable, or too many candidates."""
 
 
+#: How to resolve an ambiguity from `bios extract`, which has the flag.
+EXTRACT_ADVICE = "Name one with --layer."
+
+
+def study_advice(key: str) -> str:
+    """How to resolve an ambiguity from a command that has no ``--layer``.
+
+    ``bios study`` takes its layers from the registry and answers every question
+    with a flag it declares; telling its user to pass one it does not have is
+    advice they cannot follow. Point them at the command that does have it, and
+    at the registry pin that would settle it for every future run.
+    """
+    return (
+        "`bios study` has no --layer flag. Choose the member with\n"
+        f"    bios extract --datasets {key} --layer <member>\n"
+        f"or pin it as `layer=` on the {key} entry in catalog.py, so every run agrees."
+    )
+
+
 @dataclass(frozen=True)
 class Payload:
     """One readable dataset inside an archive."""
@@ -216,7 +235,11 @@ def readable(
 
 
 def select(
-    archive: Path, kind: str, layer_hint: str | None = None, verbose: bool = True
+    archive: Path,
+    kind: str,
+    layer_hint: str | None = None,
+    verbose: bool = True,
+    advice: str = EXTRACT_ADVICE,
 ) -> Payload:
     """Pick the single payload of ``kind`` to read, or explain why it cannot.
 
@@ -228,6 +251,11 @@ def select(
     Ambiguity is only ever declared over members that actually open. The probe
     runs solely when a choice has to be made, so the ordinary one-payload
     archive still costs nothing but a listing.
+
+    ``advice`` is the last line of a refusal and belongs to the *calling
+    command*: only `bios extract` has a ``--layer`` flag, and a refusal printed
+    by `bios study` that tells its user to pass one is an instruction they
+    cannot carry out. See :func:`study_advice`.
     """
     payloads = [p for p in inspect(archive) if p.kind == kind]
     if not payloads:
@@ -274,7 +302,7 @@ def select(
             payloads = matches
         elif verbose:
             print(
-                f"    note: --layer {layer_hint!r} matched no member of "
+                f"    note: layer hint {layer_hint!r} matched no member of "
                 f"{Path(archive).name}"
             )
 
@@ -314,6 +342,6 @@ def select(
                 if rejected
                 else ""
             ),
-            "Name one with --layer.",
+            advice,
         )
     )

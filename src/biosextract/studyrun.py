@@ -68,7 +68,7 @@ from . import (
     manifest as manifest_mod,
     studies,
 )
-from .archive import ArchiveError, select as select_payload
+from .archive import ArchiveError, select as select_payload, study_advice
 from .bbox import BBox, BBoxError
 from .outputs import VECTOR_WRITERS
 
@@ -480,7 +480,9 @@ def stage_execute(state: RunState) -> tuple[RunState, dict]:
         print(f"\n{key} - {dataset.title}")
         try:
             archive = acquire(state, dataset)
-            payload = select_payload(archive.path, dataset.kind, dataset.layer)
+            payload = select_payload(
+                archive.path, dataset.kind, dataset.layer, advice=study_advice(key)
+            )
             print(f"    reading {payload}")
 
             cite = citation_mod.from_archive(

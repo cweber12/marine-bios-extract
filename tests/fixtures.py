@@ -237,6 +237,24 @@ def make_two_gdb_archive(
     return archive
 
 
+def make_ambiguous_archive(tmp_path: Path, dataset_id: str = "ds3158") -> Path:
+    """Two shapefiles that both open: a genuine ambiguity, and one to refuse.
+
+    ``ds3158.zip`` is the real example - a line product and a polygon product
+    side by side, both readable - where the tool has no basis for choosing and
+    guessing would produce a plausible wrong answer.
+    """
+    stage = Path(tmp_path) / f"{dataset_id}_ambiguous"
+    make_shapefile(stage, "line_version")
+    make_shapefile(stage, "poly_version")
+    archive = Path(tmp_path) / f"{dataset_id}.zip"
+    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zf:
+        for fname in sorted(os.listdir(stage)):
+            zf.write(stage / fname, f"{dataset_id}/{fname}")
+        zf.writestr(f"{dataset_id}/metadata.xml", FGDC_METADATA)
+    return archive
+
+
 def make_raster_archive(tmp_path: Path, dataset_id: str = "ds3151") -> Path:
     """A GeoTIFF in Albers, zipped, standing in for Kelp Persistence."""
     import rasterio
