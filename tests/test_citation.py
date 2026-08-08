@@ -265,6 +265,10 @@ def test_end_to_end_run_emits_attribution_and_citation_in_the_manifest(archive, 
     assert cite["complete"] is True
     assert cite["originator"] == "California Department of Fish and Wildlife"
     assert "not intended for navigational use" in cite["use_constraints"]
+    # ...and from the bytes, not from the registry. `mpa` happens to record
+    # nearly the same sentence, so the assertion above passes either way and
+    # cannot say which source won - which is the whole property §4 rests on.
+    assert cite["field_sources"]["use_constraints"] == citation_mod.ARCHIVE
     # The attribution file must itself be a recorded, hashed output.
     assert any(o["kind"] == "attribution" for o in doc["outputs"])
 
