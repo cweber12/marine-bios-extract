@@ -83,6 +83,44 @@ def test_unverified_provider_refuses_to_invent_a_url():
     assert "not wired up" in str(exc.value)
 
 
+def test_every_unverified_dataset_records_why():
+    """A status with no reason gets re-argued by whoever meets it next."""
+    for key, d in catalog.DATASETS.items():
+        if d.status != "unverified":
+            continue
+        with pytest.raises(catalog.CatalogError) as exc:
+            catalog.resolve(d)
+        assert d.landing_url in str(exc.value), key
+
+
+def test_state_waters_says_which_choice_was_not_made(monkeypatch):
+    """It is downloadable; what is unverified is which of two products to read.
+
+    Resolving must therefore refuse *before* the network, not resolve happily
+    and fail later on an ambiguous archive with nothing on screen about why.
+    """
+    def no_requests(*a, **kw):  # pragma: no cover - only runs on a regression
+        raise AssertionError("an unverified dataset must not reach the publisher")
+
+    monkeypatch.setattr(catalog, "_open", no_requests)
+
+    dataset = catalog.get("state-waters")
+    assert dataset.status == "unverified"
+
+    with pytest.raises(catalog.CatalogError) as exc:
+        catalog.resolve(dataset)
+    message = str(exc.value)
+    assert "ds3158.gdb" in message and "ds3158_alt.gdb" in message
+    assert "line" in message and "polygon" in message
+
+
+def test_state_waters_is_out_of_a_default_run():
+    assert "state-waters" not in catalog.resolve_keys(None)
+    assert "state-waters" not in catalog.resolve_keys("all")
+    # ...but can still be named, which is what makes the refusal reachable.
+    assert catalog.resolve_keys("state-waters") == ["state-waters"]
+
+
 def test_metadata_url_only_for_bios():
     assert catalog.metadata_url(catalog.get("mpa")).endswith("DS582.html")
     assert catalog.metadata_url(catalog.get("cmecs-substrate")) is None

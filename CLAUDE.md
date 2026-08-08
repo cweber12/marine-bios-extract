@@ -338,9 +338,15 @@ carry no version in the URL, so the pin is resolved URL + `Last-Modified` +
 `Content-Length` + sha256, all recorded in the manifest. A changed hash on a
 cached file is reported rather than absorbed.
 
-Wired up: `mpa` (ds582), `mpa-coords` (ds3207), `state-waters` (ds3158),
-`shoreline` (ds3115), `saline-wetlands` (ds2864), `benthic-substrate` (ds3091),
-`kelp-persistence` (ds3151, 5 m raster).
+Wired up: `mpa` (ds582), `mpa-coords` (ds3207), `shoreline` (ds3115),
+`saline-wetlands` (ds2864), `benthic-substrate` (ds3091), `kelp-persistence`
+(ds3151, 5 m raster).
+
+`state-waters` (ds3158) is `unverified`, and not because its URL is unknown.
+The archive ships the 3 nm limit as a line *and* all state water as a polygon,
+both readable, and the choice between them has not been made — a jurisdictional
+boundary carries almost nothing for a buoy study. The reasoning lives in the
+registry's `status_reason` so it is not re-litigated; see issue #12.
 
 **PMEP** (`cmecs-substrate`, `cmecs-quality`) is an *external* layer in the
 Marine Viewer, published by PSMFC, not CDFW. Its bulk geodatabase sits behind a
