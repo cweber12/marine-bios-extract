@@ -341,19 +341,14 @@ DATASETS: dict[str, Dataset] = {
         kind="vector",
         dataset_id="ds3091",
         geometry_fields=("Acres", "Hectares", "Shape_Area", "Shape_Leng"),
-        # Verified out of band against the publisher's metadata page for DS3091
-        # on 2026-08-08. The archive's own document states the same licence, and
-        # wins at runtime; this is what a run says if a future archive ships no
-        # metadata at all.
-        license="CC-BY 4.0 (Creative Commons Attribution) - attribution required",
-        use_constraints=(
-            "Licensed under Creative Commons Attribution 4.0 International "
-            "(https://creativecommons.org/licenses/by/4.0/); citing it as BIOS "
-            "recommends (https://wildlife.ca.gov/Data/BIOS/Citing-BIOS) "
-            "satisfies the attribution requirement. The State disclaims "
-            "liability for errors and omissions and makes no warranty as to "
-            "accuracy, completeness, reliability or adequacy."
-        ),
+        license=CC_BY_4,
+        use_constraints=CC_BY_4_CONSTRAINTS,
+        verified_from="https://filelib.wildlife.ca.gov/Public/BDB/GIS/BIOS/metadata/DS3091.html",
+        verified_on=_VERIFIED_ON,
+        # No known_originator or known_pubdate: ds3091 is the one archive of the
+        # seven that carries a metadata document, and it names both. Pinning
+        # them would put a 2026 reading in front of whatever the bytes say after
+        # the next republication, which is the trade #14 declined to make.
         notes=(
             "Hard/soft prediction from seafloor rugosity - modelled, so context "
             "rather than ground truth. The archive ships the product three "
