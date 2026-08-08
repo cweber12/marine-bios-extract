@@ -204,6 +204,28 @@ class ResolvedSource:
 # Keys are stable CLI names. Titles match what the CDFW Marine Viewer legend
 # prints, so a layer seen in the viewer can be found here by eye.
 
+#: BIOS metadata pages state this licence in these words, verbatim and
+#: identically, on every layer verified so far. Shared because the text is the
+#: same, **not** because it is a default: each entry below carries it only
+#: where a person read it on that layer's own page, and the date they did is
+#: recorded beside it. A layer nobody has checked keeps an empty licence and
+#: surfaces as UNKNOWN.
+CC_BY_4 = "CC-BY 4.0 (Creative Commons Attribution) - attribution required"
+
+#: The use limitation those pages carry, condensed to what a person needs to
+#: read at extraction time. The full disclaimer is on the metadata page.
+CC_BY_4_CONSTRAINTS = (
+    "Licensed under Creative Commons Attribution 4.0 International "
+    "(https://creativecommons.org/licenses/by/4.0/); citing it as BIOS "
+    "recommends (https://wildlife.ca.gov/Data/BIOS/Citing-BIOS) satisfies the "
+    "attribution requirement. The State disclaims liability for errors and "
+    "omissions and makes no warranty as to accuracy, completeness, reliability "
+    "or adequacy."
+)
+
+#: Read on 2026-08-08, which is what `verified_on` records below.
+_VERIFIED_ON = "2026-08-08"
+
 DATASETS: dict[str, Dataset] = {
     # ---- CDFW BIOS, vector ------------------------------------------------
     "mpa": Dataset(
@@ -260,7 +282,21 @@ DATASETS: dict[str, Dataset] = {
         kind="vector",
         dataset_id="ds3115",
         geometry_fields=("Shape_Leng", "LENGTH", "Miles", "Kilometers"),
-        notes="Beaches, coastal marsh, hardened shores, rocky shores, tidal flats.",
+        license=CC_BY_4,
+        use_constraints=CC_BY_4_CONSTRAINTS,
+        # ds3115.zip ships 50 members and not one metadata document, so these
+        # come off the publisher's page or from nowhere. DS3115.html names no
+        # Originator, so per CDFW's Citing BIOS rule the citation takes the
+        # primary person from Point of Contact.
+        known_originator="Marine Region GIS",
+        known_pubdate="2023-07-06",
+        verified_from="https://filelib.wildlife.ca.gov/Public/BDB/GIS/BIOS/metadata/DS3115.html",
+        verified_on=_VERIFIED_ON,
+        notes=(
+            "Beaches, coastal marsh, hardened shores, rocky shores, tidal flats. "
+            "Credited to 'NOAA, CDFW': the shoreline classification derives from "
+            "NOAA's Environmental Sensitivity Index, republished by CDFW."
+        ),
     ),
     "saline-wetlands": Dataset(
         key="saline-wetlands",

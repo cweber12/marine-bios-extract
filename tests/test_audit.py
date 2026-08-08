@@ -187,7 +187,32 @@ def argv(tmp_path, *extra, datasets=("benthic-substrate",)):
     return ["citations", "--cache-dir", str(tmp_path / "empty-cache"), *datasets, *extra]
 
 
-def test_the_command_reports_without_check_and_succeeds(tmp_path, capsys):
+@pytest.fixture
+def an_unverified_layer(monkeypatch):
+    """Make `shoreline` unverified for the duration of one test.
+
+    These two used the real `shoreline` entry because it happened to have no
+    licence - and then #19 verified it, turning correct work red. Same lesson as
+    the passing-gate test: assert what an unverified row *does*, against a
+    dataset the test controls, not against whichever real layer is behind today.
+    """
+    monkeypatch.setitem(
+        catalog.DATASETS,
+        "shoreline",
+        replace(
+            catalog.get("shoreline"),
+            license="",
+            known_originator="",
+            known_pubdate="",
+            verified_from="",
+            verified_on="",
+        ),
+    )
+
+
+def test_the_command_reports_without_check_and_succeeds(
+    tmp_path, capsys, an_unverified_layer
+):
     """Without --check it is a report, and a report that fails your shell is a
     nuisance."""
     code = main(argv(tmp_path, datasets=("shoreline",)))
@@ -198,7 +223,9 @@ def test_the_command_reports_without_check_and_succeeds(tmp_path, capsys):
     assert "TODO" in printed, "it still says what is outstanding"
 
 
-def test_check_exits_non_zero_when_a_layer_is_unverified(tmp_path, capsys):
+def test_check_exits_non_zero_when_a_layer_is_unverified(
+    tmp_path, capsys, an_unverified_layer
+):
     code = main(argv(tmp_path, "--check", datasets=("shoreline",)))
 
     assert code == 1
