@@ -30,6 +30,12 @@ from pathlib import Path
 #: conspicuous in a bibliography rather than to read as a real value.
 UNKNOWN = "[unknown - see metadata]"
 
+#: Where a citation field came from. The distinction matters to a reader
+#: checking one: an archive value can be re-derived from the download they have,
+#: a registry value can only be re-checked against the page a person read.
+ARCHIVE = "archive"
+REGISTRY = "registry"
+
 
 def _localname(tag: str) -> str:
     """Strip any XML namespace. FGDC is unnamespaced, ISO 19139 is not."""
@@ -138,6 +144,10 @@ class Citation:
     access_constraints: str = ""
     metadata_source: str = ""  # which archive member supplied the values
     metadata_page: str = ""
+    #: field name -> ARCHIVE or REGISTRY. A reader checking a citation needs to
+    #: know whether a value came out of the bytes in hand or off a page someone
+    #: read once, because only one of those can be re-derived from the download.
+    field_sources: dict[str, str] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
 
     @property
@@ -172,6 +182,7 @@ class Citation:
             "access_constraints": self.access_constraints,
             "metadata_source": self.metadata_source,
             "metadata_page": self.metadata_page,
+            "field_sources": dict(self.field_sources),
             "complete": self.complete,
             "apa": self.apa(),
             "mla": self.mla(),
@@ -266,12 +277,21 @@ def from_archive(
     known_license: str = "",
     known_constraints: str = "",
     metadata_page: str = "",
+    known_originator: str = "",
+    known_pubdate: str = "",
 ) -> Citation:
     """Build a citation for a dataset from the metadata inside its archive.
 
-    ``known_license`` and ``known_constraints`` are values verified out of band
-    and recorded in the registry; anything found in the archive metadata is
-    preferred over them, since it travels with the bytes.
+    The ``known_*`` arguments are values a person verified out of band and
+    recorded in the registry. Anything found in the archive metadata is
+    preferred over them, since it travels with the bytes and stays true across a
+    republication that a pin would silently outlive.
+
+    They exist because most BIOS archives carry no metadata document at all -
+    ds582, ds3115 and ds3158 ship data and nothing else - so for those layers a
+    pin is not a shortcut past reading the bytes, it is the only thing there
+    will ever be. Which source won is recorded per field, so the manifest can
+    say so rather than leaving a reader to guess.
     """
     citation = Citation(
         key=key,
@@ -307,19 +327,37 @@ def from_archive(
     except (zipfile.BadZipFile, OSError) as exc:
         citation.warnings.append(f"could not read archive metadata: {exc}")
 
+    if known_license:
+        citation.field_sources["license"] = REGISTRY
+    if known_constraints:
+        citation.field_sources["use_constraints"] = REGISTRY
+
     if parsed:
         citation.metadata_source = member_used
         if parsed.get("originator"):
             citation.originator = parsed["originator"]
+            citation.field_sources["originator"] = ARCHIVE
         if parsed.get("pubdate"):
             citation.publication_date = format_pubdate(parsed["pubdate"]) or UNKNOWN
+            citation.field_sources["publication_date"] = ARCHIVE
         # The archive's own title is authoritative over our registry label.
         if parsed.get("title"):
             citation.title = parsed["title"]
+            citation.field_sources["title"] = ARCHIVE
         if parsed.get("use_constraints"):
             citation.use_constraints = parsed["use_constraints"]
+            citation.field_sources["use_constraints"] = ARCHIVE
         if parsed.get("access_constraints"):
             citation.access_constraints = parsed["access_constraints"]
+
+    # Only now, and only into the gaps. An archive that named an originator has
+    # already had the last word; a pin never overrides it.
+    if citation.originator == UNKNOWN and known_originator:
+        citation.originator = known_originator
+        citation.field_sources["originator"] = REGISTRY
+    if citation.publication_date == UNKNOWN and known_pubdate:
+        citation.publication_date = format_pubdate(known_pubdate) or UNKNOWN
+        citation.field_sources["publication_date"] = REGISTRY
 
     if not citation.complete:
         citation.warnings.append(
@@ -429,6 +467,12 @@ def audit(datasets: dict, cache_dir: Path) -> list[AuditRow]:
         archive = cached_archive(cache_dir, key)
         if archive is None:
             row.notes.append("no cached archive, so its metadata was not read")
+            # The pins are still what a run would print, so report them. No
+            # incomplete-citation problem is raised either way: without the
+            # archive there is no way to know whether it would have supplied
+            # the rest, and guessing in either direction would be a lie.
+            row.originator = dataset.known_originator or UNKNOWN
+            row.publication_date = format_pubdate(dataset.known_pubdate) or UNKNOWN
         else:
             row.archive = archive.name
             cite = from_archive(
@@ -437,6 +481,8 @@ def audit(datasets: dict, cache_dir: Path) -> list[AuditRow]:
                 title=dataset.title,
                 known_license=dataset.license,
                 known_constraints=dataset.use_constraints,
+                known_originator=dataset.known_originator,
+                known_pubdate=dataset.known_pubdate,
             )
             row.originator = cite.originator
             row.publication_date = cite.publication_date

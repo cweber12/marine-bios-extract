@@ -274,6 +274,8 @@ def cmd_extract(args) -> int:
                 accessed=run_date,
                 known_license=dataset.license,
                 known_constraints=dataset.use_constraints,
+                known_originator=dataset.known_originator,
+                known_pubdate=dataset.known_pubdate,
                 metadata_page=catalog.metadata_url(dataset) or "",
             )
             citations.append(cite)

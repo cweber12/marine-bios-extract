@@ -101,6 +101,103 @@ def test_missing_metadata_is_reported_not_invented(tmp_path):
     assert "DS582.html" in c.warnings[0], "the warning should say where to look"
 
 
+def test_a_pin_completes_a_citation_when_the_archive_carries_nothing(tmp_path):
+    """ds582's case: data and no metadata document, so a pin is the only source.
+
+    Without this the layer can never be cited however carefully someone reads
+    the publisher's page.
+    """
+    from tests.fixtures import make_bare_archive
+
+    arch = make_bare_archive(tmp_path, "ds582")
+    c = citation_mod.from_archive(
+        arch,
+        "mpa",
+        "California Marine Protected Areas",
+        known_originator="Marine Region GIS",
+        known_pubdate="2023-03-08",
+    )
+
+    assert c.originator == "Marine Region GIS"
+    assert c.publication_date == "2023, Mar. 8", "a pinned date is formatted like any other"
+    assert c.complete is True
+    assert not c.warnings
+
+
+def test_the_archive_beats_a_pin_that_disagrees_with_it(archive):
+    """The property the whole design rests on.
+
+    A pin keeps asserting a 2023 contact after a 2027 republication and nothing
+    notices, so where the bytes speak they win - even when a person recorded
+    something different, and even when the person was right at the time.
+    """
+    c = citation_mod.from_archive(
+        archive,
+        "mpa",
+        "MPAs",
+        known_originator="Somebody Else Entirely",
+        known_pubdate="1999-01-01",
+    )
+
+    assert c.originator == "California Department of Fish and Wildlife"
+    assert c.publication_date == "2023, Mar. 8"
+    assert c.field_sources["originator"] == citation_mod.ARCHIVE
+    assert c.field_sources["publication_date"] == citation_mod.ARCHIVE
+
+
+def test_a_pin_fills_only_the_gap_the_archive_left(tmp_path):
+    """Half an answer in the bytes and half in the registry is the common case."""
+    only_a_date = """<?xml version="1.0"?>
+<metadata><idinfo><citation><citeinfo>
+  <pubdate>20190601</pubdate><title>Shoreline Types</title>
+</citeinfo></citation></idinfo></metadata>
+"""
+    arch = make_archive(tmp_path, "ds3115", metadata=only_a_date)
+    c = citation_mod.from_archive(
+        arch,
+        "shoreline",
+        "Shoreline Types",
+        known_originator="NOAA Office of Response and Restoration",
+        known_pubdate="2001-01-01",
+    )
+
+    assert c.publication_date == "2019, Jun. 1", "the archive had a date; it wins"
+    assert c.originator == "NOAA Office of Response and Restoration", "it had no originator"
+    assert c.field_sources["publication_date"] == citation_mod.ARCHIVE
+    assert c.field_sources["originator"] == citation_mod.REGISTRY
+    assert c.complete is True
+
+
+def test_the_manifest_says_which_source_won_for_each_field(tmp_path):
+    from tests.fixtures import make_bare_archive
+
+    arch = make_bare_archive(tmp_path, "ds582")
+    c = citation_mod.from_archive(
+        arch,
+        "mpa",
+        "MPAs",
+        known_originator="Marine Region GIS",
+        known_pubdate="2023-03-08",
+        known_license="CC-BY 4.0",
+    )
+
+    sources = c.as_dict()["field_sources"]
+    assert sources["originator"] == "registry"
+    assert sources["publication_date"] == "registry"
+    assert sources["license"] == "registry"
+
+
+def test_no_pin_leaves_the_unknown_visible(tmp_path):
+    """Adding somewhere to put a verified fact must not soften what UNKNOWN means."""
+    from tests.fixtures import make_bare_archive
+
+    c = citation_mod.from_archive(make_bare_archive(tmp_path, "ds3115"), "shoreline", "S")
+
+    assert c.originator == UNKNOWN
+    assert c.complete is False
+    assert c.warnings
+
+
 def test_registry_licence_is_used_when_metadata_is_silent(archive):
     c = citation_mod.from_archive(
         archive, "mpa", "MPAs", known_license="CC-BY - attribution required"
