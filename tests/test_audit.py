@@ -334,6 +334,81 @@ def test_check_exits_non_zero_when_a_layer_is_unverified(tmp_path, capsys):
     assert f"Outstanding: {UNVERIFIED}" in capsys.readouterr().out
 
 
+def test_the_command_does_not_report_ok_for_a_citation_it_could_not_check(
+    tmp_path, capsys
+):
+    """The #25 reproduction, at the level a reader meets it.
+
+    The old output put `ok` and an `[unknown]` originator in the same block,
+    which is two statements that cannot both be true.
+    """
+    code = main(argv(tmp_path, "--check", datasets=(VERIFIED,)))
+    printed = capsys.readouterr().out
+
+    assert f"?? {VERIFIED}" in printed
+    assert f"ok {VERIFIED}" not in printed
+    assert "could not be checked" in printed
+    assert code == 0, "and the cold cache still does not fail the gate"
+
+
+def test_the_summary_does_not_add_the_unchecked_to_the_verified(tmp_path, capsys):
+    """Counting them together tells a reader more was verified than was.
+
+    One traced-but-uncheckable layer and one verified layer: the honest
+    statement is "1 of 2", not "2 of 2".
+    """
+    main(argv(tmp_path, datasets=(VERIFIED, PINNED)))
+    printed = capsys.readouterr().out
+
+    assert "1 of 2 wired-up layer(s)" in printed
+    assert f"Could not be checked from here: {VERIFIED}" in printed
+    assert PINNED not in printed.split("Could not be checked from here: ")[1]
+
+
+def test_the_unchecked_line_is_not_repeated_under_rows_that_already_have_a_todo(
+    tmp_path, capsys
+):
+    """A cold cache leaves this question open on nearly every row.
+
+    Printing it under each one buried the handful where it is the whole story:
+    ten of the thirteen real layers carried the identical line, so the `??` row
+    it exists to explain read as more of the same. The row still carries it for
+    anything reading `as_dict`.
+    """
+    main(argv(tmp_path, datasets=(VERIFIED, UNVERIFIED)))
+    printed = capsys.readouterr().out
+
+    assert printed.count("unchecked:") == 1, "once, in total"
+
+    # Rows print alphabetically and each ends with a blank line, so a block has
+    # to be bounded at both ends: splitting on the marker alone runs straight
+    # into the next row, which is where the one legitimate line lives.
+    def block(mark, key):
+        return printed.split(f"{mark} {key}")[1].split("\n\n")[0]
+
+    assert "unchecked:" not in block("--", UNVERIFIED), "the row with a TODO"
+    assert "unchecked:" in block("??", VERIFIED), "the row it explains"
+
+    row = by_key(
+        citation_mod.audit(
+            {UNVERIFIED: catalog.get(UNVERIFIED)}, tmp_path / "empty-cache"
+        )
+    )[UNVERIFIED]
+    assert row.unchecked, "suppressed on the console, still on the row"
+
+
+def test_a_pinned_layer_still_reads_ok_on_a_cold_cache(tmp_path, capsys):
+    """The new state must not spread to rows that are genuinely finished, or
+    it becomes noise and the row that meant something goes unread with it."""
+    code = main(argv(tmp_path, "--check", datasets=(PINNED,)))
+    printed = capsys.readouterr().out
+
+    assert f"ok {PINNED}" in printed
+    assert "Could not be checked" not in printed
+    assert "1 of 1 wired-up layer(s)" in printed
+    assert code == 0
+
+
 def test_check_exits_zero_when_nothing_is_outstanding(tmp_path, capsys):
     """The shape of a passing gate, against a dataset this test controls.
 
@@ -342,8 +417,13 @@ def test_check_exits_zero_when_nothing_is_outstanding(tmp_path, capsys):
     it did not yet meet arrived - and each time correct work turned it red. A
     gate test asserts what a clean row looks like, not that some particular real
     layer is clean today.
+
+    It names the pinned layer rather than the traced one because on a cold
+    cache only the pinned layer is actually clean - the traced one is
+    undetermined, which also passes the gate but for a different reason, and a
+    test that cannot tell those apart is not testing a passing gate.
     """
-    code = main(argv(tmp_path, "--check", datasets=(VERIFIED,)))
+    code = main(argv(tmp_path, "--check", datasets=(PINNED,)))
 
     assert code == 0
     assert "Outstanding" not in capsys.readouterr().out
