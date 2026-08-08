@@ -258,6 +258,18 @@ DATASETS: dict[str, Dataset] = {
         kind="vector",
         dataset_id="ds3158",
         geometry_fields=("Shape_Leng", "LENGTH"),
+        license=CC_BY_4,
+        use_constraints=CC_BY_4_CONSTRAINTS,
+        known_originator="Marine Region GIS",
+        # DS3158.html states **no publication date** - the word "Publication"
+        # does not appear on it. The page carries a metadata last-update of
+        # 2024-03-07, which describes when the record was edited rather than
+        # when the layer was published; using it would be inventing a date that
+        # reads like a fact. So the citation stays incomplete on the date, and
+        # says so, until CDFW states one.
+        known_pubdate="",
+        verified_from="https://filelib.wildlife.ca.gov/Public/BDB/GIS/BIOS/metadata/DS3158.html",
+        verified_on=_VERIFIED_ON,
         status="unverified",
         status_reason=(
             "ds3158.zip holds this limit twice and nobody has chosen which is\n"
