@@ -267,6 +267,25 @@ def make_two_gdb_archive(
     return archive
 
 
+def make_bare_archive(tmp_path: Path, dataset_id: str = "ds582") -> Path:
+    """Data and nothing else - no metadata document of any kind.
+
+    This is what most BIOS archives actually are, and it is a different case
+    from :func:`make_archive` with ``metadata=None``: that one ships an empty
+    document, which parses and yields nothing. Here there is nothing to parse.
+    Measured 2026-08-08, ds582, ds3115 and ds3158 are all like this - 50 to 98
+    members, every one of them data - so their citation can only ever come from
+    a web page a person reads.
+    """
+    stage = Path(tmp_path) / f"{dataset_id}_bare"
+    make_shapefile(stage)
+    archive = Path(tmp_path) / f"{dataset_id}-bare.zip"
+    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zf:
+        for fname in sorted(os.listdir(stage)):
+            zf.write(stage / fname, f"{dataset_id}/{fname}")
+    return archive
+
+
 def make_ambiguous_archive(tmp_path: Path, dataset_id: str = "ds3158") -> Path:
     """Two shapefiles that both open: a genuine ambiguity, and one to refuse.
 
