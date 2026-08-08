@@ -211,7 +211,9 @@ def cmd_extract(args) -> int:
                 )
 
             payload = select_payload(archive.path, dataset.kind, dataset.layer or args.layer)
-            print(f"    reading {payload}")
+            print(f"    reading {payload}", flush=True)
+            if dataset.read_note:
+                print(f"    {dataset.read_note}", flush=True)
 
             # Citation metadata comes out of the cached archive: no extra
             # request, and it describes the exact bytes in hand.

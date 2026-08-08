@@ -483,7 +483,9 @@ def stage_execute(state: RunState) -> tuple[RunState, dict]:
             payload = select_payload(
                 archive.path, dataset.kind, dataset.layer, advice=study_advice(key)
             )
-            print(f"    reading {payload}")
+            print(f"    reading {payload}", flush=True)
+            if dataset.read_note:
+                print(f"    {dataset.read_note}", flush=True)
 
             cite = citation_mod.from_archive(
                 archive.path,

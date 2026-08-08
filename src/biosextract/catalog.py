@@ -125,6 +125,12 @@ class Dataset:
     #: being true the moment a feature is clipped. Recomputed on output.
     geometry_fields: tuple[str, ...] = ()
     notes: str = ""
+    #: What reading this layer costs, printed *before* the read starts. Since
+    #: the box is expanded to whole feature groups, every selected vector layer
+    #: is read before the plan appears, so a slow one stalls a run - a --dry-run
+    #: included - before anything is on screen. Silence that long is
+    #: indistinguishable from a hang.
+    read_note: str = ""
     #: Licence verified out of band and recorded here. Anything found in the
     #: archive's own metadata document wins over this at runtime, because that
     #: travels with the bytes. Empty means "not verified" and will surface as
@@ -255,7 +261,15 @@ DATASETS: dict[str, Dataset] = {
         kind="vector",
         dataset_id="ds3091",
         geometry_fields=("Acres", "Hectares", "Shape_Area", "Shape_Leng"),
-        notes="Hard/soft prediction.",
+        notes=(
+            "Hard/soft prediction - modelled, so context rather than ground "
+            "truth. The archive ships two .gdb members and only ds3091_vector "
+            "opens; the other is named but unreadable."
+        ),
+        read_note=(
+            "333 polygons of 100+ parts each, so even a bbox-filtered read "
+            "takes a minute or two"
+        ),
     ),
     # ---- CDFW BIOS, raster ------------------------------------------------
     "kelp-persistence": Dataset(

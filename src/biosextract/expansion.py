@@ -602,6 +602,10 @@ def stage(state) -> tuple[object, dict]:
             payload = select_payload(
                 archive.path, dataset.kind, dataset.layer, advice=study_advice(key)
             )
+            if dataset.read_note:
+                # Said before the read, and flushed, because it is the pause
+                # that follows it which needs explaining.
+                print(f"           {key}: reading - {dataset.read_note}", flush=True)
             layers.append(read_window(payload.vsi_path, limit, key, layer=None))
         except Exception as exc:  # noqa: BLE001 - a layer we cannot read is not fatal
             unread[key] = f"{type(exc).__name__}: {exc}"
