@@ -974,15 +974,6 @@ def test_a_slow_layer_says_it_is_reading_before_the_pause(
     )
 
 
-def test_the_slow_layer_in_the_registry_is_the_one_that_is_slow():
-    """The note is a measured fact about ds3091, not decoration."""
-    from biosextract import catalog
-
-    noted = {k for k, d in catalog.DATASETS.items() if d.read_note}
-    assert noted == {"benthic-substrate"}
-    assert "minute" in catalog.get("benthic-substrate").read_note
-
-
 def test_an_ambiguous_archive_refuses_with_advice_this_command_can_take(
     studies_root, cache_dir, tmp_path, capsys
 ):

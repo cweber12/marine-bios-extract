@@ -7,6 +7,8 @@ confirms against a real directory listing.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from biosextract import catalog
@@ -185,6 +187,28 @@ def test_a_recorded_licence_names_a_licence():
         assert any(
             token in d.license for token in ("CC-BY", "CC0", "Public Domain")
         ), f"{key} records a licence that names nothing checkable: {d.license!r}"
+
+
+def test_a_read_note_says_what_a_slow_layer_will_cost():
+    """The note is a measured fact about ds3091, not decoration.
+
+    It lived in test_study_command, where it was the fifth test asserting on a
+    real layer's registry text from a module about behaviour - and where any
+    rewording of the note would have turned correct work red. The registry is
+    this module's subject, so it belongs here; and it now asks the note to name
+    a duration rather than to contain one particular word, because "takes a
+    minute or two" and "takes 60 to 120 seconds" are the same fact.
+    """
+    noted = {k: d for k, d in catalog.DATASETS.items() if d.read_note}
+
+    assert "benthic-substrate" in noted, "ds3091 is the layer measured as slow"
+    for key, d in noted.items():
+        assert d.status == "ready", (
+            f"{key} cannot be fetched unattended, so a note about its read is decoration"
+        )
+        assert re.search(r"minute|second|hour", d.read_note), (
+            f"{key}'s note does not say what the wait is: {d.read_note!r}"
+        )
 
 
 def test_benthic_substrate_carries_its_verified_licence():
