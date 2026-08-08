@@ -396,9 +396,25 @@ constraint matters to a decision, confirm it with the publisher directly.
 """
 
 
+#: Verified, and nothing is outstanding.
+CLEAR = "clear"
+#: Could not be checked from here. Not work, and not a clean bill of health.
+UNDETERMINED = "undetermined"
+#: Somebody has to go and do something.
+OUTSTANDING = "outstanding"
+
+
 @dataclass
 class AuditRow:
-    """What is known about one dataset's citation, and what is not."""
+    """What is known about one dataset's citation, what is not, and what could
+    not be established either way.
+
+    The third of those is the one worth naming. An audit that reads only the
+    cache has questions it genuinely cannot answer - an archive that was never
+    downloaded may or may not have carried the missing originator - and folding
+    that into "verified" reports a clean row for a citation nobody could finish.
+    See :attr:`verdict`.
+    """
 
     key: str
     title: str
@@ -417,10 +433,32 @@ class AuditRow:
     problems: list[str] = field(default_factory=list)
     #: Limits on what this audit could check - not work, but not silence either.
     notes: list[str] = field(default_factory=list)
+    #: Questions this audit could not answer from what is on disk. Not work
+    #: either: the answer is a fetch, not a verification. But unlike a note,
+    #: each one means some part of the citation is genuinely unknown here.
+    unchecked: list[str] = field(default_factory=list)
+
+    @property
+    def verdict(self) -> str:
+        """One of :data:`CLEAR`, :data:`UNDETERMINED`, :data:`OUTSTANDING`.
+
+        Outstanding wins over undetermined: a layer with a known problem is
+        already work, and reporting it as merely unknowable would be the same
+        conflation in the other direction.
+        """
+        if self.problems:
+            return OUTSTANDING
+        return UNDETERMINED if self.unchecked else CLEAR
 
     @property
     def clear(self) -> bool:
-        return not self.problems
+        """Verified complete. Deliberately narrower than "raised no problem".
+
+        A row with nothing outstanding but something unknowable is not clear;
+        it is :data:`UNDETERMINED`. Callers gating on work-to-do want
+        :func:`unverified`, which is about problems, not about this.
+        """
+        return self.verdict == CLEAR
 
     def as_dict(self) -> dict:
         return {
@@ -435,8 +473,24 @@ class AuditRow:
             "metadata_source": self.metadata_source,
             "problems": list(self.problems),
             "notes": list(self.notes),
+            "unchecked": list(self.unchecked),
+            "verdict": self.verdict,
             "clear": self.clear,
         }
+
+
+def _missing_fields(row: AuditRow) -> list[str]:
+    """Which parts of the citation are still unknown, named the way a person
+    would say them. Shared so that "could not be checked" and "is incomplete"
+    can never disagree about what is absent."""
+    return [
+        name
+        for name, value in (
+            ("originator", row.originator),
+            ("publication date", row.publication_date),
+        )
+        if value == UNKNOWN
+    ]
 
 
 def audit(datasets: dict, cache_dir: Path) -> list[AuditRow]:
@@ -480,6 +534,18 @@ def audit(datasets: dict, cache_dir: Path) -> list[AuditRow]:
             # the rest, and guessing in either direction would be a lie.
             row.originator = dataset.known_originator or UNKNOWN
             row.publication_date = format_pubdate(dataset.known_pubdate) or UNKNOWN
+            # ...but "cannot say" is not "verified", which is the whole of #25.
+            # Only what the pins leave open is unchecked: a layer whose
+            # originator and date are both pinned is complete without the
+            # archive ever being fetched, and marking it undetermined would
+            # make the state look like noise on layers that are genuinely fine.
+            missing = _missing_fields(row)
+            if missing:
+                row.unchecked.append(
+                    "no cached archive and no pinned "
+                    + " or ".join(missing)
+                    + ", so completeness could not be checked"
+                )
         else:
             row.archive = archive.name
             cite = from_archive(
@@ -501,15 +567,9 @@ def audit(datasets: dict, cache_dir: Path) -> list[AuditRow]:
                     "it can be confirmed from the bytes"
                 )
             if not cite.complete:
-                missing = [
-                    name
-                    for name, value in (
-                        ("originator", cite.originator),
-                        ("publication date", cite.publication_date),
-                    )
-                    if value == UNKNOWN
-                ]
-                row.problems.append("citation incomplete: no " + " and no ".join(missing))
+                row.problems.append(
+                    "citation incomplete: no " + " and no ".join(_missing_fields(row))
+                )
 
         if row.license == UNKNOWN:
             row.problems.append("no licence recorded, and none read from the archive")
@@ -533,8 +593,24 @@ def unverified(rows: list[AuditRow], status: str = "ready") -> list[AuditRow]:
     not expected to be citable yet - counting it would make the audit fail for
     a reason nobody can act on, and an alarm that is always ringing is one
     nobody hears.
+
+    Rows this audit could not check are *not* here: they are work nobody can do
+    from this machine, and the answer to them is a fetch. See
+    :func:`undetermined`, and the decision recorded on issue #25.
     """
-    return [r for r in rows if r.status == status and not r.clear]
+    return [r for r in rows if r.status == status and r.verdict == OUTSTANDING]
+
+
+def undetermined(rows: list[AuditRow], status: str = "ready") -> list[AuditRow]:
+    """Rows whose citation could not be checked from what is on disk.
+
+    Reported separately rather than added to either pile. Counting these as
+    verified is the bug in #25 - it tells a reader "nobody needs to finish this
+    by hand" about a citation nobody could finish. Counting them as outstanding
+    would fail the gate on every cold cache, which is most machines, and the
+    only cure would be downloading archives to satisfy it.
+    """
+    return [r for r in rows if r.status == status and r.verdict == UNDETERMINED]
 
 
 def write_attribution_file(
