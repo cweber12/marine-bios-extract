@@ -204,6 +204,28 @@ class ResolvedSource:
 # Keys are stable CLI names. Titles match what the CDFW Marine Viewer legend
 # prints, so a layer seen in the viewer can be found here by eye.
 
+#: BIOS metadata pages state this licence in these words, verbatim and
+#: identically, on every layer verified so far. Shared because the text is the
+#: same, **not** because it is a default: each entry below carries it only
+#: where a person read it on that layer's own page, and the date they did is
+#: recorded beside it. A layer nobody has checked keeps an empty licence and
+#: surfaces as UNKNOWN.
+CC_BY_4 = "CC-BY 4.0 (Creative Commons Attribution) - attribution required"
+
+#: The use limitation those pages carry, condensed to what a person needs to
+#: read at extraction time. The full disclaimer is on the metadata page.
+CC_BY_4_CONSTRAINTS = (
+    "Licensed under Creative Commons Attribution 4.0 International "
+    "(https://creativecommons.org/licenses/by/4.0/); citing it as BIOS "
+    "recommends (https://wildlife.ca.gov/Data/BIOS/Citing-BIOS) satisfies the "
+    "attribution requirement. The State disclaims liability for errors and "
+    "omissions and makes no warranty as to accuracy, completeness, reliability "
+    "or adequacy."
+)
+
+#: Read on 2026-08-08, which is what `verified_on` records below.
+_VERIFIED_ON = "2026-08-08"
+
 DATASETS: dict[str, Dataset] = {
     # ---- CDFW BIOS, vector ------------------------------------------------
     "mpa": Dataset(
@@ -236,6 +258,18 @@ DATASETS: dict[str, Dataset] = {
         kind="vector",
         dataset_id="ds3158",
         geometry_fields=("Shape_Leng", "LENGTH"),
+        license=CC_BY_4,
+        use_constraints=CC_BY_4_CONSTRAINTS,
+        known_originator="Marine Region GIS",
+        # DS3158.html states **no publication date** - the word "Publication"
+        # does not appear on it. The page carries a metadata last-update of
+        # 2024-03-07, which describes when the record was edited rather than
+        # when the layer was published; using it would be inventing a date that
+        # reads like a fact. So the citation stays incomplete on the date, and
+        # says so, until CDFW states one.
+        known_pubdate="",
+        verified_from="https://filelib.wildlife.ca.gov/Public/BDB/GIS/BIOS/metadata/DS3158.html",
+        verified_on=_VERIFIED_ON,
         status="unverified",
         status_reason=(
             "ds3158.zip holds this limit twice and nobody has chosen which is\n"
@@ -260,7 +294,21 @@ DATASETS: dict[str, Dataset] = {
         kind="vector",
         dataset_id="ds3115",
         geometry_fields=("Shape_Leng", "LENGTH", "Miles", "Kilometers"),
-        notes="Beaches, coastal marsh, hardened shores, rocky shores, tidal flats.",
+        license=CC_BY_4,
+        use_constraints=CC_BY_4_CONSTRAINTS,
+        # ds3115.zip ships 50 members and not one metadata document, so these
+        # come off the publisher's page or from nowhere. DS3115.html names no
+        # Originator, so per CDFW's Citing BIOS rule the citation takes the
+        # primary person from Point of Contact.
+        known_originator="Marine Region GIS",
+        known_pubdate="2023-07-06",
+        verified_from="https://filelib.wildlife.ca.gov/Public/BDB/GIS/BIOS/metadata/DS3115.html",
+        verified_on=_VERIFIED_ON,
+        notes=(
+            "Beaches, coastal marsh, hardened shores, rocky shores, tidal flats. "
+            "Credited to 'NOAA, CDFW': the shoreline classification derives from "
+            "NOAA's Environmental Sensitivity Index, republished by CDFW."
+        ),
     ),
     "saline-wetlands": Dataset(
         key="saline-wetlands",
@@ -269,6 +317,22 @@ DATASETS: dict[str, Dataset] = {
         kind="vector",
         dataset_id="ds2864",
         geometry_fields=("Acres", "Hectares", "Shape_Area"),
+        license=CC_BY_4,
+        use_constraints=CC_BY_4_CONSTRAINTS,
+        # The one page of the five that names an Originator outright, which is
+        # the first thing CDFW's citing rule asks for. It is the department, not
+        # a person: Melanie Gogol-Prokurat appears beside it as point of
+        # contact, and citing her would be crediting the wrong role.
+        known_originator="California Department of Fish and Wildlife",
+        known_pubdate="2017-10-26",
+        verified_from="https://filelib.wildlife.ca.gov/Public/BDB/GIS/BIOS/metadata/DS2864.html",
+        verified_on=_VERIFIED_ON,
+        notes=(
+            "Areas of Conservation Emphasis (ACE) product, credited to the "
+            "'ACE 3 Working Group and ACE 3 Development Team'. Published "
+            "2017-10-26, revised 2020-02-11; the citation takes the publication "
+            "date, which is what BIOS asks for."
+        ),
     ),
     "benthic-substrate": Dataset(
         key="benthic-substrate",
@@ -277,19 +341,14 @@ DATASETS: dict[str, Dataset] = {
         kind="vector",
         dataset_id="ds3091",
         geometry_fields=("Acres", "Hectares", "Shape_Area", "Shape_Leng"),
-        # Verified out of band against the publisher's metadata page for DS3091
-        # on 2026-08-08. The archive's own document states the same licence, and
-        # wins at runtime; this is what a run says if a future archive ships no
-        # metadata at all.
-        license="CC-BY 4.0 (Creative Commons Attribution) - attribution required",
-        use_constraints=(
-            "Licensed under Creative Commons Attribution 4.0 International "
-            "(https://creativecommons.org/licenses/by/4.0/); citing it as BIOS "
-            "recommends (https://wildlife.ca.gov/Data/BIOS/Citing-BIOS) "
-            "satisfies the attribution requirement. The State disclaims "
-            "liability for errors and omissions and makes no warranty as to "
-            "accuracy, completeness, reliability or adequacy."
-        ),
+        license=CC_BY_4,
+        use_constraints=CC_BY_4_CONSTRAINTS,
+        verified_from="https://filelib.wildlife.ca.gov/Public/BDB/GIS/BIOS/metadata/DS3091.html",
+        verified_on=_VERIFIED_ON,
+        # No known_originator or known_pubdate: ds3091 is the one archive of the
+        # seven that carries a metadata document, and it names both. Pinning
+        # them would put a 2026 reading in front of whatever the bytes say after
+        # the next republication, which is the trade #14 declined to make.
         notes=(
             "Hard/soft prediction from seafloor rugosity - modelled, so context "
             "rather than ground truth. The archive ships the product three "
@@ -309,6 +368,15 @@ DATASETS: dict[str, Dataset] = {
         provider="bios",
         kind="raster",
         dataset_id="ds3151",
+        license=CC_BY_4,
+        use_constraints=CC_BY_4_CONSTRAINTS,
+        # DS3151.html is the odd one out: an FGDC-style page rather than the
+        # ArcGIS layout the other four use. Same facts, different labels - no
+        # Originator element, so the citation again takes the Contact Person.
+        known_originator="Marine Region GIS",
+        known_pubdate="2024-02-02",
+        verified_from="https://filelib.wildlife.ca.gov/Public/BDB/GIS/BIOS/metadata/DS3151.html",
+        verified_on=_VERIFIED_ON,
         notes=(
             "5 m grid, count of years kelp canopy was observed across the "
             "2002-2016 survey series. Subject overlaps kelp-density-extract, "
