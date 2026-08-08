@@ -135,6 +135,38 @@ def inspect(archive: Path) -> list[Payload]:
     return sorted(payloads, key=lambda p: p.member.lower())
 
 
+def _basename(member: str) -> str:
+    return member.rstrip("/").rsplit("/", 1)[-1]
+
+
+def _stem(member: str) -> str:
+    base = _basename(member)
+    return base.rsplit(".", 1)[0] if "." in base else base
+
+
+def match(payloads: list[Payload], hint: str) -> list[Payload]:
+    """Members ``hint`` names, most specific reading first.
+
+    A plain substring test cannot select a member whose name is a prefix of its
+    neighbour's: ``ds3091`` sits inside ``ds3091_vector`` too, so the shorter
+    member was unreachable however it was spelled while the error promised
+    otherwise. Exactness is therefore tried before containment - full member
+    path, then filename, then filename without its extension - and the first
+    reading that matches anything wins outright.
+    """
+    hint = hint.strip().lower()
+    for rule in (
+        lambda p: p.member.lower() == hint,
+        lambda p: _basename(p.member.lower()) == hint,
+        lambda p: _stem(p.member.lower()) == hint,
+        lambda p: hint in p.member.lower(),
+    ):
+        found = [p for p in payloads if rule(p)]
+        if found:
+            return found
+    return []
+
+
 def opens(payload: Payload) -> str | None:
     """``None`` if the driver can open ``payload``, else the reason it cannot.
 
@@ -214,11 +246,37 @@ def select(
         )
 
     if layer_hint:
-        matches = [p for p in payloads if layer_hint.lower() in p.member.lower()]
+        matches = match(payloads, layer_hint)
         if len(matches) == 1:
-            return matches[0]
+            chosen = matches[0]
+            # An explicit choice is honoured, but not into a member the driver
+            # will refuse three stages later with no mention of the hint.
+            reason = opens(chosen)
+            if reason is None:
+                return chosen
+            others = [p for p in payloads if p is not chosen and opens(p) is None]
+            raise ArchiveError(
+                "%s: %r names %s, which does not open: %s%s"
+                % (
+                    Path(archive).name,
+                    layer_hint,
+                    chosen.member,
+                    reason,
+                    (
+                        "\nMembers that do open:\n  "
+                        + "\n  ".join(str(p) for p in others)
+                        if others
+                        else ""
+                    ),
+                )
+            )
         if len(matches) > 1:
             payloads = matches
+        elif verbose:
+            print(
+                f"    note: --layer {layer_hint!r} matched no member of "
+                f"{Path(archive).name}"
+            )
 
     if len(payloads) == 1:
         return payloads[0]

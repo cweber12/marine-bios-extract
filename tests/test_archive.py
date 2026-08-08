@@ -70,6 +70,56 @@ def test_unreadable_member_does_not_create_an_ambiguity(tmp_path, capsys):
     assert "skipping" in out
 
 
+def test_layer_hint_can_select_a_member_whose_name_is_a_prefix(tmp_path):
+    """`--layer ds3091` must mean ds3091.gdb, not "both, so ambiguous"."""
+    from tests.fixtures import make_two_gdb_archive
+
+    payloads = archive_mod.inspect(make_two_gdb_archive(tmp_path))
+    assert len(payloads) == 2, "the fixture is only interesting with both members"
+
+    for hint, expected in (
+        ("ds3091", "v1_final/ds3091.gdb"),
+        ("ds3091.gdb", "v1_final/ds3091.gdb"),
+        ("v1_final/ds3091.gdb", "v1_final/ds3091.gdb"),
+        ("ds3091_vector", "v1_final/ds3091_vector.gdb"),
+        ("ds3091_vector.gdb", "v1_final/ds3091_vector.gdb"),
+        ("v1_final", "both"),  # genuinely names both; not a selection
+    ):
+        matched = archive_mod.match(payloads, hint)
+        if expected == "both":
+            assert len(matched) == 2, f"{hint!r} should stay ambiguous"
+        else:
+            assert [p.member for p in matched] == [expected], f"hint {hint!r}"
+
+
+def test_naming_the_unreadable_member_fails_on_the_hint_not_three_stages_later(tmp_path):
+    from tests.fixtures import make_two_gdb_archive
+
+    with pytest.raises(archive_mod.ArchiveError) as exc:
+        archive_mod.select(make_two_gdb_archive(tmp_path), "vector", "ds3091")
+    message = str(exc.value)
+    assert "'ds3091'" in message and "does not open" in message
+    assert "ds3091_vector.gdb" in message, "it should point at what does open"
+
+
+def test_layer_hint_is_case_insensitive_and_forgives_whitespace(tmp_path):
+    from tests.fixtures import make_two_gdb_archive
+
+    payloads = archive_mod.inspect(make_two_gdb_archive(tmp_path))
+    assert [p.member for p in archive_mod.match(payloads, "  DS3091.GDB ")] == [
+        "v1_final/ds3091.gdb"
+    ]
+
+
+def test_a_layer_hint_that_names_nothing_is_said_out_loud(tmp_path, capsys):
+    """Silently ignoring a hint is how someone reads the wrong layer's numbers."""
+    from tests.fixtures import make_two_gdb_archive
+
+    payload = archive_mod.select(make_two_gdb_archive(tmp_path), "vector", "ds9999")
+    assert payload.member == "v1_final/ds3091_vector.gdb", "the readable one still wins"
+    assert "matched no member" in capsys.readouterr().out
+
+
 def test_inspect_still_lists_the_member_that_will_not_open(tmp_path):
     """The listing is a listing. Only `select` judges what opens."""
     from tests.fixtures import make_two_gdb_archive
