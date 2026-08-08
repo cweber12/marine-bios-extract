@@ -85,10 +85,16 @@ def by_key(rows):
 
 
 def test_reports_one_of_each(registry, tmp_path):
+    """A traced licence raises no problem; an absent one does.
+
+    Neither row is `clear` here, because a cold cache leaves the traced layer's
+    originator unknown - that is `test_a_cold_cache_leaves_a_citation_undetermined`
+    below. What this test is about is the problems.
+    """
     rows = by_key(citation_mod.audit(registry, tmp_path / "empty-cache"))
 
-    assert rows[VERIFIED].clear is True
-    assert rows[UNVERIFIED].clear is False
+    assert not rows[VERIFIED].problems
+    assert rows[UNVERIFIED].problems
     assert "no licence recorded" in rows[UNVERIFIED].problems[0]
 
 
@@ -103,14 +109,70 @@ def test_an_absent_archive_is_a_note_not_a_problem(registry, tmp_path):
     """The answer to "never downloaded" is a fetch, not a verification.
 
     Counting it as work outstanding would mean the audit could never pass on a
-    machine with a cold cache, which is most machines.
+    machine with a cold cache, which is most machines. That property is the one
+    #17 bought and #25 had to preserve while fixing the verdict.
     """
     rows = by_key(citation_mod.audit(registry, tmp_path / "empty-cache"))
     row = rows[VERIFIED]
 
-    assert row.clear is True
+    assert not row.problems, "an absent archive is nobody's outstanding work"
     assert row.notes and "no cached archive" in row.notes[0]
     assert not any("cached" in p for p in row.problems)
+
+
+def test_a_cold_cache_leaves_a_citation_undetermined_rather_than_clear(
+    registry, tmp_path
+):
+    """#25: `ok` for a citation nobody could check is a false clean bill.
+
+    The row printed an `[unknown]` originator and was reported as verified in
+    the same block. Nothing is outstanding - there is no work to do here - but
+    "could not be established" is its own state, not the absence of a problem.
+    """
+    row = by_key(citation_mod.audit(registry, tmp_path / "empty-cache"))[VERIFIED]
+
+    assert row.verdict == citation_mod.UNDETERMINED
+    assert row.clear is False, "it must not read as verified"
+    assert not row.problems, "...and must not read as work outstanding either"
+    assert row.originator == UNKNOWN
+    assert any("could not be checked" in u for u in row.unchecked)
+
+
+def test_pinned_facts_survive_a_cold_cache_without_going_undetermined(
+    registry, synthetic_registry, tmp_path  # noqa: F811
+):
+    """The blast-radius guard, and the reason the third state is not simply
+    "no cached archive".
+
+    Three real layers had their originator and date pinned by #18, so the
+    archive has nothing left to contribute and its absence costs nothing.
+    Keying the new state on the missing archive alone would flip all three to
+    undetermined - which is how a new verdict gets read as noise and ignored,
+    taking the one row that meant something with it.
+    """
+    registry[PINNED] = synthetic_registry[PINNED]
+
+    row = by_key(citation_mod.audit(registry, tmp_path / "empty-cache"))[PINNED]
+
+    assert row.archive == "", "no archive was read..."
+    assert row.verdict == citation_mod.CLEAR, "...and none was needed"
+    assert not row.unchecked
+
+
+def test_outstanding_work_outranks_a_question_nobody_could_answer(
+    registry, tmp_path
+):
+    """A layer can be both, and then it is outstanding.
+
+    Reporting a known-missing licence as merely unknowable would be the same
+    conflation #25 is about, pointing the other way: it would move real work
+    into the bucket the gate deliberately ignores.
+    """
+    row = by_key(citation_mod.audit(registry, tmp_path / "empty-cache"))[UNVERIFIED]
+
+    assert row.unchecked, "the cold cache left a question open here too"
+    assert row.problems, "but the absent licence is work regardless"
+    assert row.verdict == citation_mod.OUTSTANDING
 
 
 def test_reads_a_cached_archive_when_there_is_one(registry, tmp_path):
@@ -204,11 +266,41 @@ def test_rows_are_ordered_so_two_runs_read_the_same(registry, tmp_path):
     assert [r.key for r in rows] == sorted(r.key for r in rows)
 
 
+def test_the_two_selectors_do_not_overlap(registry, synthetic_registry, tmp_path):  # noqa: F811
+    """Whatever a caller does with each pile, no row is ever in both.
+
+    The summary line adds these counts up in front of a reader, so a row
+    landing in both would report more layers than the registry holds.
+    """
+    registry[PINNED] = synthetic_registry[PINNED]
+    rows = citation_mod.audit(registry, tmp_path / "empty-cache")
+
+    outstanding = {r.key for r in citation_mod.unverified(rows)}
+    unknown = {r.key for r in citation_mod.undetermined(rows)}
+
+    assert outstanding == {UNVERIFIED}
+    assert unknown == {VERIFIED}, "the traced licence with no pins and no archive"
+    assert not outstanding & unknown
+
+
+def test_an_undetermined_row_is_not_counted_as_work_outstanding(registry, tmp_path):
+    """The recorded decision on #25, asserted where it can regress.
+
+    Putting these in `unverified()` would fail `--check` on every cold cache,
+    and the only way to turn it green would be downloading an archive - the
+    exact cost #17 was built to avoid.
+    """
+    rows = citation_mod.audit(registry, tmp_path / "empty-cache")
+
+    assert VERIFIED not in {r.key for r in citation_mod.unverified(rows)}
+
+
 def test_a_row_serialises_for_the_manifest(registry, tmp_path):
     row = citation_mod.audit(registry, tmp_path / "empty-cache")[0]
     d = row.as_dict()
-    assert set(("key", "license", "problems", "notes", "clear")) <= set(d)
+    assert set(("key", "license", "problems", "notes", "unchecked", "verdict", "clear")) <= set(d)
     assert isinstance(d["problems"], list)
+    assert d["verdict"] in (citation_mod.CLEAR, citation_mod.UNDETERMINED, citation_mod.OUTSTANDING)
 
 
 # --------------------------------------------------------------------------
@@ -242,6 +334,81 @@ def test_check_exits_non_zero_when_a_layer_is_unverified(tmp_path, capsys):
     assert f"Outstanding: {UNVERIFIED}" in capsys.readouterr().out
 
 
+def test_the_command_does_not_report_ok_for_a_citation_it_could_not_check(
+    tmp_path, capsys
+):
+    """The #25 reproduction, at the level a reader meets it.
+
+    The old output put `ok` and an `[unknown]` originator in the same block,
+    which is two statements that cannot both be true.
+    """
+    code = main(argv(tmp_path, "--check", datasets=(VERIFIED,)))
+    printed = capsys.readouterr().out
+
+    assert f"?? {VERIFIED}" in printed
+    assert f"ok {VERIFIED}" not in printed
+    assert "could not be checked" in printed
+    assert code == 0, "and the cold cache still does not fail the gate"
+
+
+def test_the_summary_does_not_add_the_unchecked_to_the_verified(tmp_path, capsys):
+    """Counting them together tells a reader more was verified than was.
+
+    One traced-but-uncheckable layer and one verified layer: the honest
+    statement is "1 of 2", not "2 of 2".
+    """
+    main(argv(tmp_path, datasets=(VERIFIED, PINNED)))
+    printed = capsys.readouterr().out
+
+    assert "1 of 2 wired-up layer(s)" in printed
+    assert f"Could not be checked from here: {VERIFIED}" in printed
+    assert PINNED not in printed.split("Could not be checked from here: ")[1]
+
+
+def test_the_unchecked_line_is_not_repeated_under_rows_that_already_have_a_todo(
+    tmp_path, capsys
+):
+    """A cold cache leaves this question open on nearly every row.
+
+    Printing it under each one buried the handful where it is the whole story:
+    ten of the thirteen real layers carried the identical line, so the `??` row
+    it exists to explain read as more of the same. The row still carries it for
+    anything reading `as_dict`.
+    """
+    main(argv(tmp_path, datasets=(VERIFIED, UNVERIFIED)))
+    printed = capsys.readouterr().out
+
+    assert printed.count("unchecked:") == 1, "once, in total"
+
+    # Rows print alphabetically and each ends with a blank line, so a block has
+    # to be bounded at both ends: splitting on the marker alone runs straight
+    # into the next row, which is where the one legitimate line lives.
+    def block(mark, key):
+        return printed.split(f"{mark} {key}")[1].split("\n\n")[0]
+
+    assert "unchecked:" not in block("--", UNVERIFIED), "the row with a TODO"
+    assert "unchecked:" in block("??", VERIFIED), "the row it explains"
+
+    row = by_key(
+        citation_mod.audit(
+            {UNVERIFIED: catalog.get(UNVERIFIED)}, tmp_path / "empty-cache"
+        )
+    )[UNVERIFIED]
+    assert row.unchecked, "suppressed on the console, still on the row"
+
+
+def test_a_pinned_layer_still_reads_ok_on_a_cold_cache(tmp_path, capsys):
+    """The new state must not spread to rows that are genuinely finished, or
+    it becomes noise and the row that meant something goes unread with it."""
+    code = main(argv(tmp_path, "--check", datasets=(PINNED,)))
+    printed = capsys.readouterr().out
+
+    assert f"ok {PINNED}" in printed
+    assert "Could not be checked" not in printed
+    assert "1 of 1 wired-up layer(s)" in printed
+    assert code == 0
+
+
 def test_check_exits_zero_when_nothing_is_outstanding(tmp_path, capsys):
     """The shape of a passing gate, against a dataset this test controls.
 
@@ -250,8 +417,13 @@ def test_check_exits_zero_when_nothing_is_outstanding(tmp_path, capsys):
     it did not yet meet arrived - and each time correct work turned it red. A
     gate test asserts what a clean row looks like, not that some particular real
     layer is clean today.
+
+    It names the pinned layer rather than the traced one because on a cold
+    cache only the pinned layer is actually clean - the traced one is
+    undetermined, which also passes the gate but for a different reason, and a
+    test that cannot tell those apart is not testing a passing gate.
     """
-    code = main(argv(tmp_path, "--check", datasets=(VERIFIED,)))
+    code = main(argv(tmp_path, "--check", datasets=(PINNED,)))
 
     assert code == 0
     assert "Outstanding" not in capsys.readouterr().out

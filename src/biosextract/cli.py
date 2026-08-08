@@ -168,8 +168,13 @@ def cmd_citations(args) -> int:
     rows = citation_mod.audit(datasets, cache_dir)
     print(f"Cache:  {cache_dir}\n")
 
+    marks = {
+        citation_mod.CLEAR: "ok ",
+        citation_mod.UNDETERMINED: "?? ",
+        citation_mod.OUTSTANDING: "-- ",
+    }
     for row in rows:
-        mark = "ok " if row.clear else "-- "
+        mark = marks[row.verdict]
         status = "" if row.status == "ready" else f"  [{row.status}]"
         print(f"{mark}{row.key:20}{status}")
         print(f"      licence:    {row.license}")
@@ -181,16 +186,39 @@ def cmd_citations(args) -> int:
             print(f"      verified:   {row.verified_from}{when}")
         for problem in row.problems:
             print(f"      TODO:       {problem}")
+        # Only where it is the thing deciding the verdict. A cold cache leaves
+        # this question open on nearly every row, so printing it under each one
+        # buries the handful where it is the whole story - ten of thirteen
+        # layers carried the same line, and the `??` row it exists to explain
+        # read as more of the same. The row keeps it either way, for callers
+        # reading `as_dict`.
+        if row.verdict == citation_mod.UNDETERMINED:
+            for unknown in row.unchecked:
+                print(f"      unchecked:  {unknown}")
         for note in row.notes:
             print(f"      note:       {note}")
         print()
 
     outstanding = citation_mod.unverified(rows)
+    unchecked = citation_mod.undetermined(rows)
     ready = [r for r in rows if r.status == "ready"]
+    # Subtracting both is the point of the slice: a reader told "4 of 6" when
+    # the true statement is "4 of 6, and 1 nobody here could check" has been
+    # told something false, however carefully the rows above were printed.
     print(
-        f"{len(ready) - len(outstanding)} of {len(ready)} wired-up layer(s) have "
-        "a citation nobody needs to finish by hand."
+        f"{len(ready) - len(outstanding) - len(unchecked)} of {len(ready)} wired-up "
+        "layer(s) have a citation nobody needs to finish by hand."
     )
+    if unchecked:
+        print(
+            f"Could not be checked from here: {', '.join(r.key for r in unchecked)}"
+        )
+        print(
+            "  Their archives are not cached, so whether the metadata would "
+            "complete the citation is unknown.\n  This is not counted as work, "
+            "and does not fail --check: the cure is a download, and a gate you "
+            "satisfy\n  by fetching half a gigabyte is one nobody runs."
+        )
     if outstanding:
         print("Outstanding: " + ", ".join(r.key for r in outstanding))
         print(
@@ -546,7 +574,9 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             "Audit the citation of every dataset from the registry and whatever "
             "archives are already cached. Makes no network request, so it says "
-            "what it could not see rather than downloading to find out."
+            "what it could not see rather than downloading to find out. "
+            "Rows are marked 'ok' (verified), '??' (could not be checked from "
+            "here) or '--' (somebody has work to do)."
         ),
     )
     cit.add_argument("datasets", nargs="*", help="dataset keys; omit for all wired-up ones")
@@ -557,7 +587,10 @@ def build_parser() -> argparse.ArgumentParser:
     cit.add_argument(
         "--check",
         action="store_true",
-        help="exit non-zero if any wired-up layer still needs a person",
+        help=(
+            "exit non-zero if any wired-up layer still needs a person; a layer "
+            "this machine could not check does not fail it (see issue #25)"
+        ),
     )
     cit.set_defaults(func=cmd_citations)
 
