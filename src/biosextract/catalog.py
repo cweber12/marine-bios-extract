@@ -261,6 +261,19 @@ DATASETS: dict[str, Dataset] = {
         kind="vector",
         dataset_id="ds3091",
         geometry_fields=("Acres", "Hectares", "Shape_Area", "Shape_Leng"),
+        # Verified out of band against the publisher's metadata page for DS3091
+        # on 2026-08-08. The archive's own document states the same licence, and
+        # wins at runtime; this is what a run says if a future archive ships no
+        # metadata at all.
+        license="CC-BY 4.0 (Creative Commons Attribution) - attribution required",
+        use_constraints=(
+            "Licensed under Creative Commons Attribution 4.0 International "
+            "(https://creativecommons.org/licenses/by/4.0/); citing it as BIOS "
+            "recommends (https://wildlife.ca.gov/Data/BIOS/Citing-BIOS) "
+            "satisfies the attribution requirement. The State disclaims "
+            "liability for errors and omissions and makes no warranty as to "
+            "accuracy, completeness, reliability or adequacy."
+        ),
         notes=(
             "Hard/soft prediction from seafloor rugosity - modelled, so context "
             "rather than ground truth. The archive ships the product three "

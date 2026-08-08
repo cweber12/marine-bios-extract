@@ -121,6 +121,28 @@ def test_state_waters_is_out_of_a_default_run():
     assert catalog.resolve_keys("state-waters") == ["state-waters"]
 
 
+def test_a_recorded_licence_names_a_licence():
+    """§4: a licence is verified out of band or it stays unknown.
+
+    An empty string is the registry's way of saying "not verified", and that
+    surfaces as [unknown - see metadata]. What must never appear is a value that
+    reads like a licence without being one.
+    """
+    for key, d in catalog.DATASETS.items():
+        if not d.license:
+            continue
+        assert any(
+            token in d.license for token in ("CC-BY", "CC0", "Public Domain")
+        ), f"{key} records a licence that names nothing checkable: {d.license!r}"
+
+
+def test_benthic_substrate_carries_its_verified_licence():
+    d = catalog.get("benthic-substrate")
+    assert "CC-BY 4.0" in d.license
+    assert "creativecommons.org/licenses/by/4.0" in d.use_constraints
+    assert "disclaims liability" in d.use_constraints
+
+
 def test_metadata_url_only_for_bios():
     assert catalog.metadata_url(catalog.get("mpa")).endswith("DS582.html")
     assert catalog.metadata_url(catalog.get("cmecs-substrate")) is None
