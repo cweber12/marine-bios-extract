@@ -284,16 +284,45 @@ run writes `<prefix>_ATTRIBUTION.txt` next to the outputs: a paste-ready
 citation per layer in the format BIOS asks for, with the licence, the publisher's
 use constraints, the access date and the sha256 of the archive it came from.
 
-Citation metadata is read from the FGDC or ISO 19139 document inside each
-downloaded archive. That costs no extra request and, more importantly, describes
-the exact bytes that produced your output rather than whatever the website says
-today.
+Citation metadata is read from the FGDC, ISO 19139 or Esri ArcGIS document
+inside each downloaded archive. That costs no extra request and, more
+importantly, describes the exact bytes that produced your output rather than
+whatever the website says today.
 
 **Nothing is invented.** When the originator or publication date is not in the
 archive, the citation says `[unknown - see metadata]`, the run prints which
 layers need finishing by hand, and the manifest records `"complete": false`. An
 incomplete citation is an inconvenience; a fabricated one is a misattribution
 that outlives the run.
+
+### Checking where you stand
+
+```powershell
+.\run.ps1 citations           # report
+.\run.ps1 citations --check   # exit non-zero if any wired-up layer is unfinished
+```
+
+Most BIOS archives carry no metadata document at all — of the ones cached here,
+only `ds3091` does — so for most layers the licence exists solely on a web page
+that a person has to read and record. `citations` says which those are:
+
+```text
+ok benthic-substrate
+      licence:    CC-BY 4.0 (Creative Commons Attribution) - attribution required
+      cite as:    Marine Region GIS (2023, Apr. 20)
+      read from:  ds3091.zip - v1_final/tiff/ds3091.tif.xml
+
+-- shoreline
+      licence:    [unknown - see metadata]
+      TODO:       no licence recorded, and none read from the archive
+      note:       the archive carries no metadata document, so nothing about it
+                  can be confirmed from the bytes
+```
+
+It reads the cache and the registry only, and never asks a publisher for
+anything, so it says what it could not see rather than downloading to find out.
+A layer it has no archive for is a `note`, not a `TODO`: the answer to "never
+downloaded" is a fetch, not a verification.
 
 Provenance also travels inside the files themselves, so credit survives being
 copied out of the folder:

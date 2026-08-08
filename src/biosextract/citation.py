@@ -358,6 +358,124 @@ constraint matters to a decision, confirm it with the publisher directly.
 """
 
 
+@dataclass
+class AuditRow:
+    """What is known about one dataset's citation, and what is not."""
+
+    key: str
+    title: str
+    status: str
+    license: str = UNKNOWN
+    originator: str = UNKNOWN
+    publication_date: str = UNKNOWN
+    #: Cached archive inspected, if there was one to inspect.
+    archive: str = ""
+    #: Member the citation was read from, if the archive carried one.
+    metadata_source: str = ""
+    #: Things a person has to go and do. Empty means nothing is outstanding.
+    problems: list[str] = field(default_factory=list)
+    #: Limits on what this audit could check - not work, but not silence either.
+    notes: list[str] = field(default_factory=list)
+
+    @property
+    def clear(self) -> bool:
+        return not self.problems
+
+    def as_dict(self) -> dict:
+        return {
+            "key": self.key,
+            "status": self.status,
+            "license": self.license,
+            "originator": self.originator,
+            "publication_date": self.publication_date,
+            "archive": self.archive,
+            "metadata_source": self.metadata_source,
+            "problems": list(self.problems),
+            "notes": list(self.notes),
+            "clear": self.clear,
+        }
+
+
+def audit(datasets: dict, cache_dir: Path) -> list[AuditRow]:
+    """Report what is verified about every dataset's citation, and what is not.
+
+    Reads **only what is already on disk**. A licence audit that downloads half
+    a gigabyte is one nobody runs, and for most BIOS layers the archive has
+    nothing to say anyway: three of the four cached on 2026-08-08 ship no
+    metadata document at all, so their licence exists only on a web page a
+    person has to read.
+
+    That asymmetry is why a row separates *problems* from *notes*. A problem is
+    work outstanding - nobody has verified this licence. A note is a limit on
+    what could be checked here, such as an archive that has never been
+    downloaded; the answer to that is a fetch, not a verification, and treating
+    it as a failure would mean the audit could never pass on a cold cache.
+
+    ``datasets`` is passed in rather than read from the registry so a test can
+    hand it a known mix, and so a caller can audit a subset.
+    """
+    from .fetch import cached_archive
+
+    rows: list[AuditRow] = []
+    for key in sorted(datasets):
+        dataset = datasets[key]
+        row = AuditRow(
+            key=key,
+            title=dataset.title,
+            status=dataset.status,
+            license=dataset.license or UNKNOWN,
+        )
+
+        archive = cached_archive(cache_dir, key)
+        if archive is None:
+            row.notes.append("no cached archive, so its metadata was not read")
+        else:
+            row.archive = archive.name
+            cite = from_archive(
+                archive,
+                key=key,
+                title=dataset.title,
+                known_license=dataset.license,
+                known_constraints=dataset.use_constraints,
+            )
+            row.originator = cite.originator
+            row.publication_date = cite.publication_date
+            row.metadata_source = cite.metadata_source
+            row.license = cite.license
+            if not cite.metadata_source:
+                row.notes.append(
+                    "the archive carries no metadata document, so nothing about "
+                    "it can be confirmed from the bytes"
+                )
+            if not cite.complete:
+                missing = [
+                    name
+                    for name, value in (
+                        ("originator", cite.originator),
+                        ("publication date", cite.publication_date),
+                    )
+                    if value == UNKNOWN
+                ]
+                row.problems.append("citation incomplete: no " + " and no ".join(missing))
+
+        if row.license == UNKNOWN:
+            row.problems.append("no licence recorded, and none read from the archive")
+
+        rows.append(row)
+    return rows
+
+
+def unverified(rows: list[AuditRow], status: str = "ready") -> list[AuditRow]:
+    """Rows with outstanding work, among datasets of ``status``.
+
+    The verdict covers wired-up datasets only. A gated or unverified source is
+    not expected to be citable yet - counting it would make the audit fail for
+    a reason nobody can act on, and an alarm that is always ringing is one
+    nobody hears.
+    """
+    return [r for r in rows if r.status == status and not r.clear]
+
+
 def write_attribution_file(
     citations: list[Citation], path: Path, bbox_text: str, version: str, generated: str
 ) -> Path:

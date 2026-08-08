@@ -241,6 +241,23 @@ def fetch(
     )
 
 
+def cached_archive(cache_dir: Path, key: str) -> Path | None:
+    """The archive already on disk for ``key``, or ``None``.
+
+    :func:`fetch` and :func:`adopt_local` lay the cache out as
+    ``<cache_dir>/<key>/<name>.zip``; this is the read-only counterpart, for
+    callers that want to look at what has already been downloaded without
+    asking the publisher for anything. It does not validate: a caller that
+    intends to *read* the archive will find out soon enough, and a caller
+    merely reporting on the cache should not delete a file as a side effect.
+    """
+    directory = Path(cache_dir) / key
+    if not directory.is_dir():
+        return None
+    archives = sorted(p for p in directory.glob("*.zip") if p.is_file())
+    return archives[0] if archives else None
+
+
 def adopt_local(source: ResolvedSource, archive: Path, cache_dir: Path,
                 verbose: bool = True) -> CachedArchive:
     """Take a manually downloaded archive into the cache.
