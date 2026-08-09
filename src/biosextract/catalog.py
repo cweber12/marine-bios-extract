@@ -212,6 +212,19 @@ class ResolvedSource:
 #: surfaces as UNKNOWN.
 CC_BY_4 = "CC-BY 4.0 (Creative Commons Attribution) - attribution required"
 
+#: Attribution required, version unstated. For layers whose only surviving
+#: licence statement is data.ca.gov's `cc-by`, which names no version. Recording
+#: 4.0 for them would claim a precision the source does not have, and the
+#: difference is not cosmetic: 4.0 waives the attribution formalities earlier
+#: versions require.
+CC_BY_UNVERSIONED = "CC-BY (Creative Commons Attribution) - attribution required"
+
+#: Where the two 404-ed layers' licence actually comes from. Weaker than a
+#: DS####.html page - a state aggregator's record *about* the layer rather than
+#: the layer's own metadata - and recorded as the best that exists rather than
+#: as an equal. See issue #20.
+_CA_OPEN_DATA = "https://data.ca.gov/dataset/"
+
 #: The use limitation those pages carry, condensed to what a person needs to
 #: read at extraction time. The full disclaimer is on the metadata page.
 CC_BY_4_CONSTRAINTS = (
@@ -235,13 +248,28 @@ DATASETS: dict[str, Dataset] = {
         kind="vector",
         dataset_id="ds582",
         geometry_fields=("Acres", "Hectares", "Shape_Area", "Shape_Leng", "AREA_SQMI"),
-        license="CC-BY (Creative Commons Attribution) - attribution required",
+        license=CC_BY_UNVERSIONED,
         use_constraints=(
             "This dataset is not intended for navigational use or defining legal "
             "boundaries. The authoritative boundaries are those in California Code "
-            "of Regulations Title 14 section 632."
+            "of Regulations Title 14 section 632. No restrictions on public use "
+            "(data.ca.gov)."
         ),
-        notes="SMR, SMCA, SMRMA, SMP and special closures.",
+        # DS582.html 404s, so the licence comes from data.ca.gov rather than the
+        # publisher's own metadata document. The claim itself is unchanged - it
+        # was already CC-BY, unversioned, from nowhere anybody could name - so
+        # this records where it can now be re-checked rather than inventing it.
+        # Deliberately not upgraded to 4.0: the portal states no version.
+        known_originator="California Department of Fish and Wildlife",
+        # No known_pubdate. Not on the portal, and its `dcat_issued` is
+        # ingest time, not publication - see #20 for the tag-date counter-example.
+        verified_from=_CA_OPEN_DATA + "california-marine-protected-areas-ds582",
+        verified_on=_VERIFIED_ON,
+        notes=(
+            "SMR, SMCA, SMRMA, SMP and special closures. The use constraint is "
+            "corroborated by the portal's own description, which states the "
+            "navigational-use limit and cites Title 14 section 632."
+        ),
     ),
     "mpa-coords": Dataset(
         key="mpa-coords",
@@ -249,7 +277,26 @@ DATASETS: dict[str, Dataset] = {
         provider="bios",
         kind="vector",
         dataset_id="ds3207",
-        notes="Boundary corner points as published in regulation.",
+        license=CC_BY_UNVERSIONED,
+        use_constraints=(
+            "No restrictions on public use (data.ca.gov). These coordinates are "
+            "transcribed from California Code of Regulations Title 14 section 632 "
+            "and, for federal areas, the applicable Code of Federal Regulations; "
+            "the regulations are authoritative, not this dataset."
+        ),
+        # As mpa: DS3207.html 404s, so data.ca.gov is the only surviving
+        # statement. The constraint is drawn from that record's own description
+        # of how the coordinates were produced - it is not mpa's constraint
+        # copied across, which would be asserting something ds3207 never said.
+        known_originator="California Department of Fish and Wildlife",
+        verified_from=_CA_OPEN_DATA + "marine-protected-areas-coordinates-r7-cdfw-ds3207",
+        verified_on=_VERIFIED_ON,
+        notes=(
+            "Boundary corner points as published in regulation. Where a "
+            "subsection gives only one coordinate the point sits somewhere on "
+            "that boundary line, and where it gives none the point is the MPA "
+            "centroid - so a point is a regulatory reference, not a survey mark."
+        ),
     ),
     "state-waters": Dataset(
         key="state-waters",
