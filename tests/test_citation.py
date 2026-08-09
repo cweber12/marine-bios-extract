@@ -230,6 +230,61 @@ def test_apa_and_mla_contain_all_five_required_elements(archive):
         assert "2026-08-07" in style  # when accessed
 
 
+def test_apa_names_the_publisher_once_when_it_is_also_the_originator():
+    """Three layers are credited to the department that publishes them.
+
+    BIOS's citation form has an Originator slot and a Publisher slot and assumes
+    they differ - which they do for the layers credited to Marine Region GIS.
+    Filling both for a departmental product printed the name twice in one
+    sentence, which a reader takes for a bug in the tool rather than a fact
+    about the layer.
+    """
+    c = citation_mod.Citation(
+        key="x",
+        title="A Layer",
+        originator="California Department of Fish and Wildlife",
+        publication_date="2023",
+        accessed="2026-08-08",
+        url="https://example.invalid/x.zip",
+    )
+    apa = c.apa()
+
+    assert apa.count("California Department of Fish and Wildlife") == 1
+    assert "BIOS" in apa, "and the repository is still named"
+
+
+def test_apa_drops_the_publisher_when_the_originator_is_a_unit_of_it():
+    """admin-kelp-beds' shape: the department, plus the unit inside it.
+
+    Not textually equal to the publisher, so an equality check would miss it and
+    print the department twice - once alone, once with its lab named.
+    """
+    c = citation_mod.Citation(
+        key="x",
+        title="A Layer",
+        originator="California Department of Fish and Wildlife, Marine Region GIS Laboratory",
+        publication_date="2023",
+    )
+
+    assert c.apa().count("California Department of Fish and Wildlife") == 1
+    assert "Marine Region GIS Laboratory" in c.apa()
+
+
+def test_apa_keeps_the_publisher_when_the_originator_is_somebody_else():
+    """The case BIOS's two-slot form was designed for, and the regression risk.
+
+    Five layers are credited to Marine Region GIS, and dropping the department
+    from those would lose the publisher from the citation entirely.
+    """
+    c = citation_mod.Citation(
+        key="x", title="A Layer", originator="Marine Region GIS", publication_date="2023"
+    )
+    apa = c.apa()
+
+    assert "Marine Region GIS." in apa
+    assert "California Department of Fish and Wildlife" in apa
+
+
 def test_attribution_file_warns_about_clipped_attributes(tmp_path, archive):
     c = citation_mod.from_archive(archive, "mpa", "MPAs")
     path = citation_mod.write_attribution_file(
