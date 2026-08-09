@@ -33,7 +33,7 @@ import textwrap
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Sequence
 
-from . import studies
+from . import fetch as fetch_mod, studies
 from .bbox import BBox, BBoxError
 
 UP = "up"
@@ -291,9 +291,12 @@ def _header(title) -> list[str]:
 #: Fixed, and not "as many as the message needs": redraw walks the cursor back
 #: by the number of lines it drew last time, so a screen that shrinks by a line
 #: leaves a stale one behind and every subsequent redraw is off by one. A
-#: reason long enough to need two lines is normal here - they name a URL and a
-#: flag - so the block is always this tall and mostly blank.
-MESSAGE_LINES = 2
+#: reason long enough to need three lines is normal here - they name a URL and
+#: a flag - so the block is always this tall and mostly blank. Three, because a
+#: refusal truncated before it reaches "pass --local-archive KEY=<path>" has
+#: told the reader they cannot have the layer and not how to get it, which is
+#: the half of the message worth printing.
+MESSAGE_LINES = 3
 
 #: Where a message wraps. Narrow enough to survive an 80-column console, since
 #: a line the terminal wraps for us breaks the same count.
@@ -308,7 +311,17 @@ def message_block(message: str) -> list[str]:
     """
     wrapped: list[str] = []
     for para in (message or "").splitlines() or [""]:
-        wrapped.extend(textwrap.wrap(para, MESSAGE_WIDTH) or [""])
+        # Never inside a word, and never at a hyphen: these messages carry
+        # URLs, and `https://prd-` / `tnm.s3...` on two lines is not a URL
+        # anybody can copy - it reads as two different hosts. A URL longer
+        # than the width overflows its line instead, which at worst costs one
+        # cosmetic redraw drift on a narrow console.
+        wrapped.extend(
+            textwrap.wrap(
+                para, MESSAGE_WIDTH, break_long_words=False, break_on_hyphens=False
+            )
+            or [""]
+        )
     wrapped = wrapped[:MESSAGE_LINES]
     wrapped += [""] * (MESSAGE_LINES - len(wrapped))
     return [f"  {line}" for line in wrapped]
@@ -549,3 +562,154 @@ def pick_study(found, root="", pad_km: float = PREVIEW_PAD_KM, read=None, write=
         study_rows(found, pad_km), study_title(root, pad_km),
         read=read, write=write, redraw=redraw,
     )
+
+
+# --------------------------------------------------------------------------
+# screen two: which datasets
+# --------------------------------------------------------------------------
+
+DATASET_TITLE = [
+    "Select the layers to extract",
+    "every layer this toolkit knows about is listed; the ones it cannot fetch "
+    "for you say why",
+]
+
+
+def unblock(dataset) -> str:
+    """What a person would have to do to make this dataset runnable.
+
+    "Why can I not have this" is asked on the screen where the layer is
+    refused, so it is answered there rather than in a README nobody has open.
+    """
+    if dataset.status == "manual":
+        where = f" Form: {dataset.landing_url}" if dataset.landing_url else ""
+        # The flag comes before the URL: a refusal truncated by a narrow
+        # console should lose the address before it loses the instruction.
+        return (
+            "gated behind a registration form. Download it once, then pass "
+            f"--local-archive {dataset.key}=<path>.{where}"
+        )
+    if dataset.status == "unverified":
+        reason = dataset.status_reason.strip() or (
+            "Its download has not been confirmed against the publisher, so "
+            "asking for it raises rather than guessing a URL."
+        )
+        where = f" See {dataset.landing_url}." if dataset.landing_url else ""
+        return f"{reason}{where}"
+    return ""  # pragma: no cover - a ready dataset needs no unblocking
+
+
+def dataset_row(dataset, key_width: int = 18, local: bool = False) -> Row:
+    """One registry entry, as a row.
+
+    ``local`` says an archive for it was supplied with ``--local-archive``,
+    which makes a gated layer runnable *for this run* - refusing a dataset
+    somebody has already handed us the file for would be absurd.
+    """
+    parts = [
+        f"{dataset.key:<{key_width}}",
+        f"{dataset.kind:<6}",
+        f"{(dataset.dataset_id or '-'):<8}",
+        dataset.title,
+    ]
+    if local:
+        return Row(text="  ".join(parts) + "  [local archive]", value=dataset.key)
+    if dataset.status == "ready":
+        return Row(text="  ".join(parts), value=dataset.key)
+    return Row(
+        text="  ".join(parts) + f"  [{dataset.status}]",
+        value=dataset.key,
+        selectable=False,
+        reason=f"{dataset.key}: {unblock(dataset)}",
+    )
+
+
+def dataset_rows(registry, local_archives=()) -> list[Row]:
+    """Every registry entry, ready ones first and each group in key order.
+
+    Ordering by runnability rather than alphabetically puts the rows somebody
+    can act on under the cursor when the screen opens, and keeps the ones they
+    cannot together at the bottom where they read as a list of "not yet"
+    rather than as scattered failures.
+    """
+    local = set(local_archives)
+    entries = list(registry.values())
+    entries.sort(key=lambda d: (d.status != "ready" and d.key not in local, d.key))
+    width = min(22, max([len(d.key) for d in entries] + [12]))
+    return [dataset_row(d, width, local=d.key in local) for d in entries]
+
+
+def pick_datasets(registry, local_archives=(), read=None, write=None, redraw=None) -> Choice:
+    """Choose any number of datasets. The value is a list of keys.
+
+    Nothing is pre-selected: a run that extracts half a gigabyte because
+    somebody pressed enter past a screen is exactly the surprise the sizes
+    below exist to prevent.
+    """
+    return choose_many(
+        dataset_rows(registry, local_archives), DATASET_TITLE,
+        read=read, write=write, redraw=redraw,
+    )
+
+
+# --------------------------------------------------------------------------
+# what the selection costs, before it costs it
+# --------------------------------------------------------------------------
+
+
+def report_sizes(
+    keys,
+    registry,
+    resolve,
+    cache_dir=None,
+    local_archives=(),
+    write=None,
+    timeout: int = 60,
+    resolved: dict | None = None,
+) -> dict:
+    """Resolve the selected archives and print what fetching them would cost.
+
+    Resolution is a directory listing and a HEAD per dataset - no payload - so
+    this is the last point at which "151 MB" is a number somebody can still act
+    on. The results are returned so the run can reuse them: the same two
+    requests made twice would make ``bios network``'s per-dataset count a lie.
+
+    Already-cached archives are named as such rather than counted, because the
+    question being answered is what this run will *download*.
+
+    A dataset that will not resolve is reported and skipped. Refusing here
+    would duplicate the plan stage's refusal, which is better placed and knows
+    about --keep-going.
+    """
+    write = write or (lambda line: print(line))
+    resolved = {} if resolved is None else resolved
+    local = set(local_archives)
+
+    write("")
+    write("Archive sizes, before anything is downloaded:")
+    to_fetch = 0
+    for key in keys:
+        dataset = registry[key]
+        if key in local:
+            write(f"  {key:<22} supplied with --local-archive")
+            continue
+        cached = fetch_mod.cached_archive(cache_dir, key) if cache_dir else None
+        if key not in resolved:
+            try:
+                resolved[key] = resolve(dataset, timeout=timeout)
+            except Exception as exc:  # noqa: BLE001 - reported, never fatal here
+                resolved[key] = None
+                write(f"  {key:<22} unavailable - {str(exc).splitlines()[0]}")
+                continue
+        src = resolved[key]
+        if src is None:
+            write(f"  {key:<22} unavailable")
+            continue
+        size = f"{src.bytes / 1e6:.1f} MB" if src.bytes else "size unknown"
+        if cached:
+            write(f"  {key:<22} {size:>12}  already cached")
+        else:
+            to_fetch += src.bytes or 0
+            write(f"  {key:<22} {size:>12}  {src.last_modified or 'date unknown'}")
+    write(f"  {'':<22} {f'{to_fetch / 1e6:.1f} MB':>12}  to download")
+    return resolved

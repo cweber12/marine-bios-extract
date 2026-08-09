@@ -212,6 +212,12 @@ def test_a_message_is_wrapped_into_a_fixed_number_of_lines():
     assert all(len(line) <= picker.MESSAGE_WIDTH + 2 for line in picker.message_block(long))
 
 
+def test_a_url_in_a_message_is_not_split_across_lines():
+    url = "https://prd-tnm.s3.amazonaws.com/index.html?prefix=StagedProducts/Hydrography/WBD/"
+    block = "\n".join(picker.message_block(f"Nobody has confirmed this one. See {url}."))
+    assert url in block, "a hyphen-split URL reads as two hosts and cannot be copied"
+
+
 def test_the_screen_is_the_same_height_with_and_without_a_message():
     """Redraw walks back by the lines it drew last time; a shrinking screen drifts."""
     out, write = _sink()
@@ -469,6 +475,173 @@ def test_no_studies_at_all_is_an_error_naming_the_directory():
     with pytest.raises(studies.StudyError, match="C:/nowhere"):
         picker.pick_study([], root="C:/nowhere", read=_keys(b"\r"),
                           write=lambda s: None, redraw=False)
+
+
+# --------------------------------------------------------------------------
+# screen two: which datasets
+#
+# Asserted against the synthetic registry, never the real one: a test that
+# said "cmecs-substrate is gated" would turn red the day somebody wires it up,
+# which is a correct change. See tests/registry.py and #24.
+# --------------------------------------------------------------------------
+
+
+def _registry():
+    from tests.registry import SYNTHETIC
+
+    return dict(SYNTHETIC)
+
+
+def test_every_registry_entry_appears_including_the_ones_it_cannot_fetch():
+    registry = _registry()
+    rows = picker.dataset_rows(registry)
+    assert {r.value for r in rows} == set(registry)
+
+
+def test_only_fetchable_entries_are_selectable():
+    registry = _registry()
+    rows = {r.value: r for r in picker.dataset_rows(registry)}
+    assert rows["layer-verified"].selectable
+    assert not rows["layer-gated"].selectable
+    assert not rows["layer-demoted"].selectable
+
+
+def test_a_refused_row_is_marked_and_says_what_would_unblock_it():
+    registry = _registry()
+    rows = {r.value: r for r in picker.dataset_rows(registry)}
+
+    gated = rows["layer-gated"]
+    assert "[manual]" in gated.text
+    assert "--local-archive layer-gated=<path>" in gated.reason
+    assert "example.invalid" in gated.reason
+
+    demoted = rows["layer-demoted"]
+    assert "[unverified]" in demoted.text
+    assert "a choice nobody has made" in demoted.reason
+
+
+def test_a_supplied_local_archive_makes_a_gated_layer_runnable():
+    rows = {r.value: r for r in picker.dataset_rows(_registry(), ["layer-gated"])}
+    assert rows["layer-gated"].selectable
+    assert "[local archive]" in rows["layer-gated"].text
+
+
+def test_runnable_rows_come_first():
+    rows = picker.dataset_rows(_registry())
+    runnable = [r.selectable for r in rows]
+    assert runnable == sorted(runnable, reverse=True)
+
+
+def test_selecting_a_gated_layer_prints_the_reason_and_stays_open():
+    out, write = _sink()
+    registry = _registry()
+    keys = [r.value for r in picker.dataset_rows(registry)]
+    steps = [b"\xe0P"] * keys.index("layer-gated") + [b" ", b"\x1b"]
+    got = picker.pick_datasets(registry, read=_keys(*steps), write=write, redraw=False)
+    assert got.is_back, "a refusal must not end the screen"
+    assert any("--local-archive" in line for line in out)
+
+
+def test_select_all_picks_exactly_the_fetchable_layers():
+    _, write = _sink()
+    registry = _registry()
+    got = picker.pick_datasets(registry, read=_keys(b"a", b"\r"), write=write, redraw=False)
+    assert set(got.value) == {k for k, d in registry.items() if d.status == "ready"}
+
+
+def test_the_dataset_screen_names_its_keys_on_screen():
+    out, write = _sink()
+    picker.pick_datasets(_registry(), read=_keys(b" ", b"\r"), write=write, redraw=False)
+    text = "".join(out)
+    assert "space toggle" in text and "enter confirm" in text
+
+
+# --------------------------------------------------------------------------
+# what the selection costs
+# --------------------------------------------------------------------------
+
+
+class _Source:
+    def __init__(self, size, last_modified="Thu, 30 May 2024 00:00:00 GMT"):
+        self.bytes = size
+        self.last_modified = last_modified
+
+
+def test_sizes_are_reported_before_anything_is_fetched():
+    out, write = _sink()
+    registry = _registry()
+    calls = []
+
+    def resolve(dataset, timeout=60):
+        calls.append(dataset.key)
+        return _Source(12_300_000)
+
+    resolved = picker.report_sizes(
+        ["layer-verified", "layer-pinned"], registry, resolve, write=write
+    )
+    text = "\n".join(out)
+    assert calls == ["layer-verified", "layer-pinned"]
+    assert "12.3 MB" in text
+    assert "24.6 MB" in text and "to download" in text
+    assert set(resolved) == {"layer-verified", "layer-pinned"}
+
+
+def test_a_dataset_that_will_not_resolve_is_reported_not_raised():
+    out, write = _sink()
+
+    def resolve(dataset, timeout=60):
+        raise RuntimeError("no such archive in 9000_9099\nthe bucket holds: ...")
+
+    resolved = picker.report_sizes(["layer-verified"], _registry(), resolve, write=write)
+    assert resolved == {"layer-verified": None}
+    assert any("unavailable - no such archive" in line for line in out)
+
+
+def test_an_already_cached_archive_is_not_counted_as_a_download(tmp_path):
+    from tests.fixtures import make_archive
+
+    cache = tmp_path / "cache" / "layer-verified"
+    cache.mkdir(parents=True)
+    make_archive(cache)
+
+    out, write = _sink()
+    picker.report_sizes(
+        ["layer-verified"], _registry(), lambda d, timeout=60: _Source(12_300_000),
+        cache_dir=tmp_path / "cache", write=write,
+    )
+    text = "\n".join(out)
+    assert "already cached" in text
+    assert "0.0 MB" in text, "a cached archive costs nothing to fetch"
+
+
+def test_a_local_archive_is_named_rather_than_resolved():
+    out, write = _sink()
+
+    def resolve(dataset, timeout=60):
+        raise AssertionError("a supplied archive must not be resolved")
+
+    picker.report_sizes(
+        ["layer-gated"], _registry(), resolve, local_archives=["layer-gated"], write=write
+    )
+    assert any("--local-archive" in line for line in out)
+
+
+def test_an_already_resolved_dataset_is_not_resolved_again():
+    """Stepping back and forward must not cost a second listing and HEAD."""
+    calls = []
+
+    def resolve(dataset, timeout=60):
+        calls.append(dataset.key)
+        return _Source(1_000_000)
+
+    resolved = picker.report_sizes(
+        ["layer-verified"], _registry(), resolve, write=lambda line: None
+    )
+    picker.report_sizes(
+        ["layer-verified"], _registry(), resolve, write=lambda line: None,
+        resolved=resolved,
+    )
+    assert calls == ["layer-verified"]
 
 
 # --------------------------------------------------------------------------
