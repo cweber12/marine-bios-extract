@@ -355,8 +355,18 @@ carry no version in the URL, so the pin is resolved URL + `Last-Modified` +
 cached file is reported rather than absorbed.
 
 Wired up: `mpa` (ds582), `mpa-coords` (ds3207), `shoreline` (ds3115),
-`saline-wetlands` (ds2864), `benthic-substrate` (ds3091), `kelp-persistence`
-(ds3151, 5 m raster).
+`saline-wetlands` (ds2864), `benthic-substrate` (ds3091), `eelgrass` (ds1503),
+`admin-kelp-beds` (ds3135), `kelp-persistence` (ds3151, 5 m raster).
+
+Every one of them carries a licence with provenance — the page it was read from
+and when — so `bios citations` can be trusted about what is verified. Three do
+**not** carry a publication date, because CDFW does not state one for them:
+`mpa`, `mpa-coords` and `admin-kelp-beds`. Their citations are incomplete and
+say so, and `--check` fails on them once their archives are cached. Do not
+resolve that by taking a date from an ArcGIS "Last update" timestamp or from a
+`DS####_YYYYMMDD_wm` tag — neither is a publication date, and the tag agrees
+with the real one often enough to be convincing (see #20). It has to come from
+CDFW.
 
 `state-waters` (ds3158) is `unverified`, and not because its URL is unknown.
 The archive ships the 3 nm limit as a line *and* all state water as a polygon,
