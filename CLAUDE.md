@@ -362,11 +362,24 @@ Every one of them carries a licence with provenance — the page it was read fro
 and when — so `bios citations` can be trusted about what is verified. Three do
 **not** carry a publication date, because CDFW does not state one for them:
 `mpa`, `mpa-coords` and `admin-kelp-beds`. Their citations are incomplete and
-say so, and `--check` fails on them once their archives are cached. Do not
-resolve that by taking a date from an ArcGIS "Last update" timestamp or from a
-`DS####_YYYYMMDD_wm` tag — neither is a publication date, and the tag agrees
-with the real one often enough to be convincing (see #20). It has to come from
-CDFW.
+say so, and `--check` fails on them once their archives are cached. It has to
+come from CDFW; `geodata@wildlife.ca.gov` is the contact BIOS publishes.
+
+**Four nearby dates have been tested and rejected as substitutes.** Each was
+checked against the layers where CDFW states a publication date outright, and
+each disagreed. They are listed because every one of them looks right at a
+glance, and three of the four agree with the real date on at least one layer —
+enough to convince anyone who checks a single example:
+
+| Candidate | Why it fails |
+|---|---|
+| `dcat_issued` (data.ca.gov) | DCAT defines it as formal issuance, so it *should* be right. Matches none of the four: 1 day out on `shoreline`, 4 years out on `saline-wetlands` |
+| `dcat_modified` (data.ca.gov) | Tracks republication. Matches none |
+| `Created` (data.ca.gov) | Portal ingest — identical across every CDFW dataset |
+| `DS####_YYYYMMDD_wm` tag | Tracks a republish. Matches `ds3151` and `ds3115` exactly, then misses `ds2864` by 8 years |
+
+The full evidence is on #20. Do not re-adopt one of these without re-running
+that control — a spot check on one layer will pass.
 
 `state-waters` (ds3158) is `unverified`, and not because its URL is unknown.
 The archive ships the 3 nm limit as a line *and* all state water as a polygon,
