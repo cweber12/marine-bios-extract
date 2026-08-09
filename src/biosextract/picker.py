@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import os
 import sys
+import textwrap
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Sequence
 
@@ -286,6 +287,33 @@ def _header(title) -> list[str]:
     return [f"  {line}" for line in lines] + [""]
 
 
+#: Lines reserved at the foot of a screen for the message a refusal prints.
+#: Fixed, and not "as many as the message needs": redraw walks the cursor back
+#: by the number of lines it drew last time, so a screen that shrinks by a line
+#: leaves a stale one behind and every subsequent redraw is off by one. A
+#: reason long enough to need two lines is normal here - they name a URL and a
+#: flag - so the block is always this tall and mostly blank.
+MESSAGE_LINES = 2
+
+#: Where a message wraps. Narrow enough to survive an 80-column console, since
+#: a line the terminal wraps for us breaks the same count.
+MESSAGE_WIDTH = 76
+
+
+def message_block(message: str) -> list[str]:
+    """The message, wrapped and padded to exactly :data:`MESSAGE_LINES` lines.
+
+    A message too long for the block is truncated rather than allowed to push
+    the screen taller; the reasons that need the room are written to fit.
+    """
+    wrapped: list[str] = []
+    for para in (message or "").splitlines() or [""]:
+        wrapped.extend(textwrap.wrap(para, MESSAGE_WIDTH) or [""])
+    wrapped = wrapped[:MESSAGE_LINES]
+    wrapped += [""] * (MESSAGE_LINES - len(wrapped))
+    return [f"  {line}" for line in wrapped]
+
+
 def _screen(
     rows: Sequence[Row],
     title,
@@ -322,7 +350,8 @@ def _screen(
         lines = (
             _header(title)
             + render_rows(rows, index, selected if multi else None)
-            + ["", f"  {MANY_KEYS if multi else ONE_KEYS}", f"  {message}"]
+            + ["", f"  {MANY_KEYS if multi else ONE_KEYS}"]
+            + message_block(message)
         )
         for line in lines:
             write(("\x1b[2K" if redraw else "") + line + "\n")

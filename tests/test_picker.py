@@ -204,6 +204,35 @@ def test_instructions_are_drawn_on_the_screen():
     assert "enter select" in text and "esc back" in text and "q quit" in text
 
 
+def test_a_message_is_wrapped_into_a_fixed_number_of_lines():
+    long = "a reason " * 40
+    assert len(picker.message_block("")) == picker.MESSAGE_LINES
+    assert len(picker.message_block("short")) == picker.MESSAGE_LINES
+    assert len(picker.message_block(long)) == picker.MESSAGE_LINES
+    assert all(len(line) <= picker.MESSAGE_WIDTH + 2 for line in picker.message_block(long))
+
+
+def test_the_screen_is_the_same_height_with_and_without_a_message():
+    """Redraw walks back by the lines it drew last time; a shrinking screen drifts."""
+    out, write = _sink()
+    picker.choose_one(
+        _rows("broken", "fine", unselectable=("broken",)),
+        "pick",
+        # refused (message shown), then moved (message cleared), then selected
+        read=_keys(b"\r", b"\xe0P", b"\r"),
+        write=write,
+        redraw=False,
+    )
+    heights = [len(chunk) for chunk in _screens(out)]
+    assert len(set(heights)) == 1, f"screen height changed between draws: {heights}"
+
+
+def _screens(lines):
+    """Split a transcript into the successive screens that produced it."""
+    starts = [i for i, line in enumerate(lines) if line.lstrip().startswith("pick")]
+    return [lines[a:b] for a, b in zip(starts, starts[1:] + [len(lines)])]
+
+
 def test_redraw_emits_cursor_escapes_only_when_enabled():
     plain, write_plain = _sink()
     picker.choose_one(_rows("a", "b"), "pick", read=_keys(b"\xe0P", b"\r"),
