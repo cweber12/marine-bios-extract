@@ -155,11 +155,24 @@ class Citation:
         return UNKNOWN not in (self.originator, self.publication_date)
 
     def apa(self) -> str:
-        """BIOS's documented APA form: Originator. (Date). Title. Publisher. Repository."""
-        return (
-            f"{self.originator}. ({self.publication_date}). {self.title}. "
-            f"{self.publisher}. {self.repository}. Retrieved {self.accessed}, from {self.url}"
-        )
+        """BIOS's documented APA form: Originator. (Date). Title. Publisher. Repository.
+
+        The publisher slot is dropped when the originator already names it.
+        BIOS's form assumes the two differ - as they do for the layers credited
+        to Marine Region GIS - but for a layer credited to the department
+        itself, filling both prints "California Department of Fish and Wildlife"
+        twice in one sentence, which reads as a bug in the citation rather than
+        as a fact about the layer. Nothing is lost by dropping it: the publisher
+        is still named, once.
+        """
+        publisher = "" if self.publisher.lower() in self.originator.lower() else self.publisher
+        parts = [
+            f"{self.originator}. ({self.publication_date}). {self.title}.",
+            f"{publisher}." if publisher else "",
+            f"{self.repository}.",
+            f"Retrieved {self.accessed}, from {self.url}",
+        ]
+        return " ".join(p for p in parts if p)
 
     def mla(self) -> str:
         return (
