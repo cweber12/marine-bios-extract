@@ -247,6 +247,22 @@ read-time bbox filter so a statewide layer never lands in memory whole.
 
 ## 4. Project conventions
 
+**Placement is decided by the publisher, not by the subject.** A layer belongs
+in this repo if CDFW BIOS publishes it — whatever it is about. Each module in
+the family pulls from a single source, and a proposal to add a second publisher
+here is the signal that the work belongs in a different repo.
+
+This replaces deciding by *question asked* ("is this a different question from
+the kelp toolkit's?"), which sounded principled and was not: it is a judgement
+call, so it had to be re-argued from scratch for every new layer, and it could
+be argued either way each time. Who publishes it is checkable.
+
+`admin-kelp-beds` (ds3135) is the worked example. It is a kelp layer, and the
+family contains a kelp repo, so by subject it looks like it belongs there. CDFW
+BIOS publishes it and `kelp-density-extract` pulls only from EDI, so it lives
+here. Deciding by subject would have put a BIOS download in a repo with no BIOS
+code, to satisfy a category that exists in nobody's head but ours.
+
 **Nothing about a study area is hardcoded.** No baked-in bounding box, dataset
 list, CRS, or output directory. Everything comes from the CLI or a config file,
 and the CLI wins. `hf-radar-extract` is the reference implementation.
@@ -339,8 +355,18 @@ carry no version in the URL, so the pin is resolved URL + `Last-Modified` +
 cached file is reported rather than absorbed.
 
 Wired up: `mpa` (ds582), `mpa-coords` (ds3207), `shoreline` (ds3115),
-`saline-wetlands` (ds2864), `benthic-substrate` (ds3091), `kelp-persistence`
-(ds3151, 5 m raster).
+`saline-wetlands` (ds2864), `benthic-substrate` (ds3091), `eelgrass` (ds1503),
+`admin-kelp-beds` (ds3135), `kelp-persistence` (ds3151, 5 m raster).
+
+Every one of them carries a licence with provenance — the page it was read from
+and when — so `bios citations` can be trusted about what is verified. Three do
+**not** carry a publication date, because CDFW does not state one for them:
+`mpa`, `mpa-coords` and `admin-kelp-beds`. Their citations are incomplete and
+say so, and `--check` fails on them once their archives are cached. Do not
+resolve that by taking a date from an ArcGIS "Last update" timestamp or from a
+`DS####_YYYYMMDD_wm` tag — neither is a publication date, and the tag agrees
+with the real one often enough to be convincing (see #20). It has to come from
+CDFW.
 
 `state-waters` (ds3158) is `unverified`, and not because its URL is unknown.
 The archive ships the 3 nm limit as a line *and* all state water as a polygon,
@@ -362,8 +388,26 @@ the landing page rather than guessing a URL. Wiring each one up is a slice of
 its own: confirm the real staged-product path, add a fixture, then flip the
 status to `ready`.
 
-**Overlap with kelp-density-extract is intentional but not duplicative.**
-`kelp-persistence` (ds3151) is CDFW's rasterised aerial survey product, counting
-years in which canopy was observed. The kelp toolkit reads Landsat-derived
-*biomass* from EDI. Different sources, different units, different questions —
-keep them in their own repos.
+**Overlap with kelp-density-extract is intentional but not duplicative.** Three
+kelp layers now sit across two repos, and the split is by publisher (§4), not by
+what the layers are about:
+
+| Layer | Repo | Because |
+|---|---|---|
+| `kelp-persistence` (ds3151) | here | CDFW BIOS publishes it |
+| `admin-kelp-beds` (ds3135) | here | CDFW BIOS publishes it |
+| Landsat canopy biomass | `kelp-density-extract` | EDI publishes it |
+
+They are also different products — a rasterised aerial survey, a regulatory
+harvest boundary, and a 30 m biomass time series — but that is a happy
+coincidence, not the reason. If CDFW published all three, all three would be
+here.
+
+**"Kelpwatch" and "EDI" are the same source, not two.** `kelp-density-extract`
+fetches SBC LTER package `knb-lter-sbc.74` from EDI, which is the dataset
+kelpwatch.org visualizes. So it already pulls from one publisher, and asking it
+to "use Kelpwatch" changes nothing unless it means Kelpwatch's *public vector
+tiles* — which that repo evaluated and rejected, in its own §6, for reasons
+worth not rediscovering: canopy area only (no biomass, no standard errors, no
+observation count), a quarter behind the EDI archive, and only a `latest.tiles`
+path, so nothing pinnable and no reproducible output.
