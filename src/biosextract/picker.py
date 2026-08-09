@@ -14,10 +14,10 @@ msvcrt on Windows, termios on POSIX.
 
 WHAT THIS MODULE IS AND IS NOT
 ------------------------------
-This file is the *engine*: keys, cursor, rows, the two loops, and the
+The first half is the *engine*: keys, cursor, rows, the two loops, and the
 sequencing that lets a screen step back to the one before it. It knows nothing
-about studies or datasets. The screens themselves live beside it and are built
-out of :class:`Row` values.
+about studies or datasets. The screens themselves are built out of :class:`Row`
+values and live in the second half.
 
 Every screen returns a :class:`Choice`, which distinguishes three outcomes that
 a boolean cannot: something was chosen, the user stepped *back*, or the user
@@ -31,6 +31,9 @@ import os
 import sys
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Sequence
+
+from . import studies
+from .bbox import BBox, BBoxError
 
 UP = "up"
 DOWN = "down"
@@ -407,3 +410,113 @@ def walk(steps: Sequence[Step]) -> list | None:
         answers[i] = choice.value
         i += 1
     return answers
+
+
+# --------------------------------------------------------------------------
+# screen one: which study
+# --------------------------------------------------------------------------
+
+#: The padding a later screen will offer, in kilometres. Defined here because
+#: the study list has to show a box size *before* anybody has chosen one, and
+#: the number it shows must be one of the numbers actually on offer.
+PAD_PRESETS_KM = (5.0, 10.0, 20.0)
+
+#: What the study list measures its boxes with. The smallest preset, so no row
+#: ever advertises a box larger than the one the smallest answer would give.
+#: The raw station envelope is not usable for this: for the reference study it
+#: is a sub-kilometre sliver, and every row would read "0.9x0.2 km" - which is
+#: true, and tells a reader nothing about the extraction they are about to run.
+PREVIEW_PAD_KM = min(PAD_PRESETS_KM)
+
+
+def study_marker(study) -> str:
+    """How this study's existing marine-bios output is advertised, if any."""
+    if not study.has_products and study.our_status is None:
+        return ""
+    if study.our_status == studies.STATUS_OK:
+        return f"[{studies.PRODUCER}]"
+    if study.our_status:
+        # An incomplete or failed run is exactly the row somebody needs to find
+        # again, so the status is spelled out rather than reduced to a tick.
+        return f"[{studies.PRODUCER}: {study.our_status}]"
+    return f"[{studies.PRODUCER}: unrecorded]"
+
+
+def study_size(study, pad_km: float = PREVIEW_PAD_KM) -> str | None:
+    """``'23.4x21.7 km'`` for one study, or ``None`` when there is no box."""
+    envelope = study.envelope()
+    if envelope is None:
+        return None
+    try:
+        box = BBox.from_envelope(
+            envelope, north_km=pad_km, south_km=pad_km, east_km=pad_km, west_km=pad_km
+        )
+    except BBoxError:
+        return None
+    return f"{box.width_km:.1f}x{box.height_km:.1f} km"
+
+
+def study_row(study, label_width: int = 16, pad_km: float = PREVIEW_PAD_KM) -> Row:
+    """One study, as a row: label, created, stations, box size, marker.
+
+    A study that cannot produce a box says so *here*, in place of the size,
+    rather than looking ordinary until you pick it and are refused.
+    """
+    label = study.label
+    if len(label) > label_width:
+        label = label[: label_width - 2] + ".."
+
+    parts = [
+        f"{label:<{label_width}}",
+        f"{study.created_short:<16}",
+        f"{study.station_summary():>7}",
+    ]
+
+    reason = study.unusable_reason
+    size = None if reason else study_size(study, pad_km)
+    if size is None and not reason:
+        reason = "the stations give no box to extract for"
+    if reason:
+        parts.append(f" -- {reason}")
+        return Row(text="  ".join(parts), value=study, selectable=False, reason=reason)
+
+    parts.append(f"{size:>13}")
+    mark = study_marker(study)
+    if mark:
+        parts.append(mark)
+    return Row(text="  ".join(parts), value=study)
+
+
+def study_rows(found, pad_km: float = PREVIEW_PAD_KM) -> list[Row]:
+    """Every study, in the order given - which ``list_studies`` makes newest first."""
+    width = min(24, max([len(s.label) for s in found] + [12]))
+    return [study_row(s, width, pad_km) for s in found]
+
+
+def study_title(root, pad_km: float = PREVIEW_PAD_KM) -> list[str]:
+    """The header. It states which padding the box sizes assume."""
+    return [
+        f"Select a study      {root}",
+        f"box sizes assume {pad_km:g} km padding on every side; the padding you "
+        "give decides the real box",
+    ]
+
+
+def pick_study(found, root="", pad_km: float = PREVIEW_PAD_KM, read=None, write=None,
+               redraw=None) -> Choice:
+    """Choose one study. The value of a picked :class:`Choice` is the study.
+
+    A study whose metadata will not parse is listed with its error rather than
+    omitted, and a study with no positioned stations is visible but refuses
+    selection: handing the caller something it must immediately reject is worse
+    than saying why, on the screen where the question occurs.
+    """
+    found = list(found)
+    if not found:
+        raise studies.StudyError(
+            f"no studies under {root}\nStudies are created by station-data-extract."
+        )
+    return choose_one(
+        study_rows(found, pad_km), study_title(root, pad_km),
+        read=read, write=write, redraw=redraw,
+    )

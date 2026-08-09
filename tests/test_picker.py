@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from biosextract import picker
+from biosextract import picker, studies
 from biosextract.picker import ALL, BACK, DOWN, OTHER, QUIT, SELECT, TOGGLE, UP
 
 
@@ -345,6 +345,101 @@ def test_the_quit_key_abandons_from_any_screen():
     first = _step(picker.Choice.picked("a"))
     second = _step(picker.Choice.abandoned())
     assert picker.walk([first, second]) is None
+
+
+# --------------------------------------------------------------------------
+# screen one: which study
+# --------------------------------------------------------------------------
+
+
+def _study(label, lon=-117.257, lat=32.867, n_null=0, our_status=None, error=None,
+           created="2026-08-05T23:52:00Z"):
+    sts = []
+    if lon is not None:
+        sts.append(studies.Station("autoss", lon, lat, "primary_reference"))
+        sts.append(studies.Station("LJAC1", lon - 0.01, lat + 0.001, "cross_check"))
+    for i in range(n_null):
+        sts.append(studies.Station(f"unplaced{i}", None, None, "subject"))
+    return studies.Study(
+        path=f"studies/{label}", study_id=label, label=label, created_utc=created,
+        stations=sts, error=error, our_status=our_status,
+    )
+
+
+def test_study_row_shows_label_time_stations_and_box_size():
+    row = picker.study_row(_study("yellow-buoy", n_null=1))
+    assert "yellow-buoy" in row.text
+    assert "2026-08-05 23:52" in row.text
+    assert "2/3 st" in row.text
+    assert "km" in row.text
+    assert row.selectable
+
+
+def test_the_header_says_which_padding_the_sizes_assume():
+    lines = picker.study_title("C:/studies")
+    assert "C:/studies" in lines[0]
+    assert f"{picker.PREVIEW_PAD_KM:g} km padding" in lines[1]
+
+
+def test_the_preview_padding_is_the_smallest_offered_preset():
+    assert picker.PREVIEW_PAD_KM == min(picker.PAD_PRESETS_KM)
+
+
+def test_box_size_is_the_padded_box_not_the_station_sliver():
+    """The raw envelope here is under a kilometre; the row must not say so."""
+    size = picker.study_size(_study("a"), pad_km=5.0)
+    width, _, height = size.partition("x")
+    assert 9.0 < float(width) < 12.0
+    assert 9.0 < float(height.split()[0]) < 11.0
+
+
+def test_a_study_whose_metadata_will_not_parse_shows_its_error_not_a_size():
+    row = picker.study_row(_study("broken", lon=None, error="Expecting value: line 1"))
+    assert "Expecting value" in row.text
+    assert "km" not in row.text
+    assert not row.selectable
+
+
+def test_a_study_with_no_positioned_stations_is_listed_but_unselectable():
+    row = picker.study_row(_study("nowhere", lon=None, n_null=3))
+    assert "0/3 st" in row.text
+    assert "no station" in row.reason
+    assert not row.selectable
+
+
+def test_existing_output_is_marked_including_when_it_is_incomplete():
+    assert picker.study_marker(_study("a")) == ""
+    assert picker.study_marker(_study("a", our_status="ok")) == "[marine-bios]"
+    assert "incomplete" in picker.study_marker(_study("a", our_status="incomplete"))
+    assert "marine-bios" in picker.study_row(_study("a", our_status="ok")).text
+
+
+def test_long_labels_are_truncated_not_wrapped():
+    row = picker.study_row(_study("a-really-very-long-study-label"), label_width=16)
+    assert ".." in row.text
+    assert len(row.text.split("  ")[0]) <= 16
+
+
+def test_the_list_keeps_the_order_it_was_given():
+    found = [_study("newest", created="2026-08-07T00:00:00Z"),
+             _study("oldest", created="2026-08-01T00:00:00Z")]
+    rows = picker.study_rows(found)
+    assert [r.value.label for r in rows] == ["newest", "oldest"]
+
+
+def test_picking_a_study_with_no_box_explains_and_leaves_the_list_open():
+    found = [_study("nowhere", lon=None, n_null=2), _study("fine")]
+    out, write = _sink()
+    got = picker.pick_study(found, read=_keys(b"\r", b"\xe0P", b"\r"),
+                            write=write, redraw=False)
+    assert got.value is found[1]
+    assert any("no station in this study has a position" in line for line in out)
+
+
+def test_no_studies_at_all_is_an_error_naming_the_directory():
+    with pytest.raises(studies.StudyError, match="C:/nowhere"):
+        picker.pick_study([], root="C:/nowhere", read=_keys(b"\r"),
+                          write=lambda s: None, redraw=False)
 
 
 # --------------------------------------------------------------------------
