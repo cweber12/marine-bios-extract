@@ -33,11 +33,35 @@ has a position, pads it by 10 km on each side, and writes the layers to
 one entry to `study.json`'s `producers` list and touches nothing else in that
 file.
 
+Leave a flag out and it is asked for on screen instead:
+
+```powershell
+.\run.ps1 study --pad-km 10
+```
+
+That draws the study list, then the layer list, and runs exactly what a fully
+specified command would have. Supplying a flag skips its screen, so a partly
+specified command asks only for what is missing, and a fully specified one draws
+nothing at all. Neither screen is drawn unless both stdin and stdout are a
+terminal: with output redirected the command behaves as it always has, which is
+what keeps it usable from a script. On a screen, up/down move and wrap at both
+ends, enter selects, space toggles a layer, `a` selects every runnable layer,
+`esc` steps back one screen — and exits from the first — and `q` abandons the
+run.
+
+The layer screen lists everything in the registry, including the layers this
+toolkit cannot fetch for you. Those refuse selection and say what would unblock
+them rather than being hidden, and once you confirm a selection the archive
+sizes are printed before anything is downloaded.
+
 Some details worth knowing:
 
 - **The study can be named four ways** — its id, its label, any unique fragment
   of either, or `latest`. A fragment matching more than one study is an error
   listing them, never a silent pick of the newest.
+- **The study list shows the box each study would give**, measured at 5 km of
+  padding and labelled as such. The raw envelope of the stations is a
+  sub-kilometre sliver — true, and useless for telling two studies apart.
 - **Padding is required and has no default.** A margin is a statement about the
   study area, and this repo does not bake study areas into code. `--pad-km`
   sets every side; `--pad-north-km`, `--pad-south-km`, `--pad-east-km` and
@@ -369,7 +393,10 @@ discovers nothing. Per dataset, a cold run makes three requests: one `GET` on th
 bucket directory index to confirm the archive exists, one `HEAD` to read its size
 and `Last-Modified`, and one `GET` to download it. Every later run makes zero,
 because the archive is cached. All seven automatic datasets is roughly 21
-requests, once.
+requests, once. The layer screen makes the first two of those as soon as you
+confirm a selection — that is how it prints the sizes before anything is
+downloaded — and hands the results to the run, so the count per dataset is
+unchanged.
 
 It contacts exactly one host, `filelib.wildlife.ca.gov`. As checked on
 2026-08-06, that host's `robots.txt` disallows `/cgi-bin/`, `/scripts/`,
