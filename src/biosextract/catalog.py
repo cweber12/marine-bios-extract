@@ -361,6 +361,70 @@ DATASETS: dict[str, Dataset] = {
             "takes a minute or two"
         ),
     ),
+    "eelgrass": Dataset(
+        key="eelgrass",
+        title="Eelgrass",
+        provider="bios",
+        kind="vector",
+        dataset_id="ds1503",
+        # area_acres is the publisher's acreage of the uncut bed, and the first
+        # precomputed area in this registry not called "Acres" - which is the
+        # point of declaring it rather than matching on a name the code knows.
+        geometry_fields=("area_acres", "Shape_Length", "Shape_Area"),
+        license=CC_BY_4,
+        use_constraints=CC_BY_4_CONSTRAINTS,
+        # DS1503.html names no Originator, and its Credits line is an
+        # instruction ("email R7MRGIS for supplemental information") rather than
+        # an attribution, so the citation takes the Point of Contact - whose
+        # "individual's name" is an org unit, not a person. Same shape as
+        # shoreline and kelp-persistence.
+        known_originator="Marine Region GIS",
+        known_pubdate="2024-05-30",
+        verified_from="https://filelib.wildlife.ca.gov/Public/BDB/GIS/BIOS/metadata/DS1503.html",
+        verified_on=_VERIFIED_ON,
+        notes=(
+            "Zostera marina beds in estuaries, bays and sheltered coast - "
+            "habitat that anchors sediment and serves as nursery for "
+            "invertebrates, fish and birds. Aggregated from many surveys across "
+            "multiple years, so the Year and fsource fields matter: a polygon "
+            "is evidence of eelgrass when that survey ran, not proof it is "
+            "there now. GDAL warns that organizePolygons 'may be really slow' "
+            "on its 100+-part polygons; measured at 1.8 s for a bbox-filtered "
+            "read, so the warning is noise rather than a cost - no read_note."
+        ),
+    ),
+    "admin-kelp-beds": Dataset(
+        key="admin-kelp-beds",
+        title="Administrative Kelp Beds",
+        provider="bios",
+        kind="vector",
+        dataset_id="ds3135",
+        geometry_fields=("Shape_Length", "Shape_Area"),
+        license=CC_BY_4,
+        use_constraints=CC_BY_4_CONSTRAINTS,
+        # DS3135.html names no Originator, and its Point of Contact is a person
+        # (Rebecca Flores Miller, Environmental Scientist). Crediting her would
+        # credit the wrong role, the same call saline-wetlands made, so the
+        # citation takes the Credits line verbatim - which is the field whose
+        # whole job is to say who to attribute.
+        known_originator="California Department of Fish and Wildlife, Marine Region GIS Laboratory",
+        # No known_pubdate, and not an oversight. DS3115.html carries an
+        # explicit "Publication date" field, which is where shoreline's pin came
+        # from; DS3135.html has no such field. Its only dates are ArcGIS item
+        # timestamps - "Last update" 2024-01-11, geoprocessing lineage the same
+        # day - and a processing timestamp is not a publication date. Recording
+        # one would be inventing attribution, so the citation reports itself
+        # incomplete instead. See the notes.
+        verified_from="https://filelib.wildlife.ca.gov/Public/BDB/GIS/BIOS/metadata/DS3135.html",
+        verified_on=_VERIFIED_ON,
+        notes=(
+            "87 beds designated under Title 14 for managing commercial kelp "
+            "harvest, each open, closed, leasable or leased. Regulatory rather "
+            "than ecological: it says who may harvest where, not where kelp is. "
+            "The publisher states no publication date, so the citation needs a "
+            "date from CDFW (geodata@wildlife.ca.gov) before it is complete."
+        ),
+    ),
     # ---- CDFW BIOS, raster ------------------------------------------------
     "kelp-persistence": Dataset(
         key="kelp-persistence",
