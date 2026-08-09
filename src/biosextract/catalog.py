@@ -261,8 +261,14 @@ DATASETS: dict[str, Dataset] = {
         # this records where it can now be re-checked rather than inventing it.
         # Deliberately not upgraded to 4.0: the portal states no version.
         known_originator="California Department of Fish and Wildlife",
-        # No known_pubdate. Not on the portal, and its `dcat_issued` is
-        # ingest time, not publication - see #20 for the tag-date counter-example.
+        # No known_pubdate. The portal offers three date fields and none of
+        # them is one: `Created` is portal ingest (identical across every CDFW
+        # dataset), and `dcat_issued` / `dcat_modified` were tested against the
+        # four layers where CDFW states a publication date outright and matched
+        # none. `dcat_issued` is the dangerous one - DCAT defines dct:issued as
+        # formal issuance, so it *should* be right, and on shoreline it lands
+        # one day out, which reads as a timezone artifact until saline-wetlands
+        # comes in four years out. The full table is on #20.
         verified_from=_CA_OPEN_DATA + "california-marine-protected-areas-ds582",
         verified_on=_VERIFIED_ON,
         notes=(
