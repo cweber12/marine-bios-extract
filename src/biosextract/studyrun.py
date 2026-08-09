@@ -140,6 +140,12 @@ class Request:
     padding: Padding
     formats: list[str]
     local_archives: dict[str, Path] = field(default_factory=dict)
+    #: Archives resolved before the run started. The dataset picker resolves
+    #: what it was given so it can show the sizes before anything is fetched,
+    #: and those results are handed here rather than thrown away: resolution is
+    #: a directory listing and a HEAD, and doing it twice would make the
+    #: per-dataset request count in ``bios network`` untrue.
+    preresolved: dict[str, catalog.ResolvedSource] = field(default_factory=dict)
     cache_dir: Path = field(default_factory=studies.default_cache_dir)
     output_crs: str | None = None
     resolution: float | None = None
@@ -362,10 +368,20 @@ def stage_resolve_sources(state: RunState) -> tuple[RunState, dict]:
     Nothing is printed and nothing is refused here. A dataset that cannot be
     resolved is recorded and handed to :func:`stage_plan`, which is where a
     person reads what this run will do and where the refusal belongs.
+
+    A dataset the picker already resolved - to show its size before anything
+    was fetched - is adopted rather than resolved again. That is the whole
+    point of carrying those results on the request: the listing and the HEAD
+    happen once per dataset per run, however many things wanted the answer.
+    Only the datasets this run was asked for are adopted, so a selection that
+    shrank on a step back cannot smuggle a layer back in.
     """
     request = state.request
     for key in request.datasets:
-        if key in request.local_archives:
+        if key in request.local_archives or key in state.sources:
+            continue
+        if request.preresolved.get(key) is not None:
+            state.sources[key] = request.preresolved[key]
             continue
         try:
             state.sources[key] = catalog.resolve(catalog.get(key), timeout=request.timeout)
@@ -373,6 +389,7 @@ def stage_resolve_sources(state: RunState) -> tuple[RunState, dict]:
             state.source_errors[key] = str(exc)
     return state, {
         "resolved": sorted(state.sources),
+        "reused": sorted(k for k in request.datasets if k in request.preresolved),
         "local": sorted(k for k in request.datasets if k in request.local_archives),
         "unavailable": sorted(state.source_errors),
     }

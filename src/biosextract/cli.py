@@ -502,6 +502,86 @@ def _padding(args) -> "studyrun_mod.Padding":
     return studyrun_mod.Padding(**resolved)
 
 
+def _ask(args, studies_root: Path, cache_dir: Path, local: dict) -> tuple | None:
+    """Fill in what the flags did not say, from the screens.
+
+    Returns ``(study, dataset keys, already-resolved sources)``, or ``None``
+    when the run was abandoned. Each screen replaces one flag: supplying the
+    flag skips the screen, so a fully specified command draws nothing and a
+    partly specified one asks only for what is missing.
+
+    Nothing is drawn without a terminal on both streams. There, a missing
+    ``--study`` is an error naming the flag rather than a prompt nobody can
+    answer, and a missing ``--datasets`` keeps the headless default: every
+    wired-up layer.
+    """
+    from . import picker, studies as studies_mod
+
+    study = args.study
+    # `--datasets` with no values means "every wired-up layer", asked for
+    # explicitly; not supplying it at all is what the screen is for.
+    keys = (
+        None
+        if args.datasets is None
+        else catalog.resolve_keys(",".join(args.datasets) if args.datasets else None)
+    )
+    if study is not None and keys is not None:
+        return study, keys, {}
+
+    if not picker.can_pick():
+        if study is None:
+            raise SystemExit(
+                "no study given, and no terminal to choose one on.\n"
+                "Pass --study with a study id, a label, a unique fragment of "
+                "either, or 'latest'."
+            )
+        return study, catalog.resolve_keys(None), {}
+
+    found = studies_mod.list_studies(studies_mod.require_studies_root(studies_root))
+    #: Kept across the whole wizard, so stepping back into a screen and forward
+    #: again costs nothing. Downloads are already free to repeat - the cache
+    #: holds them - and this makes the resolutions free too.
+    resolved: dict = {}
+    steps = []
+
+    if study is None:
+        def pick_the_study(answers):
+            choice = picker.pick_study(found, root=studies_root)
+            return (
+                picker.Choice.picked(choice.value.study_id)
+                if choice.is_picked
+                else choice
+            )
+
+        steps.append(pick_the_study)
+
+    if keys is None:
+        def pick_the_datasets(answers):
+            choice = picker.pick_datasets(catalog.DATASETS, local_archives=local)
+            if choice.is_picked:
+                picker.report_sizes(
+                    choice.value,
+                    catalog.DATASETS,
+                    catalog.resolve,
+                    cache_dir=cache_dir,
+                    local_archives=local,
+                    timeout=args.timeout,
+                    resolved=resolved,
+                )
+            return choice
+
+        steps.append(pick_the_datasets)
+
+    answers = picker.walk(steps)
+    if answers is None:
+        return None
+    if study is None:
+        study = answers.pop(0)
+    if keys is None:
+        keys = answers.pop(0)
+    return study, keys, {k: v for k, v in resolved.items() if v is not None and k in keys}
+
+
 def cmd_study(args) -> int:
     from . import expansion as expansion_mod, studies as studies_mod
 
@@ -509,20 +589,35 @@ def cmd_study(args) -> int:
     # quietly change what a run does.
     expansion_mod.register()
 
+    studies_root = (
+        Path(args.studies_root) if args.studies_root else studies_mod.default_studies_root()
+    )
+    cache_dir = Path(args.cache_dir) if args.cache_dir else studies_mod.default_cache_dir()
+    local = _parse_local_archives(args.local_archive)
+    # Ahead of the screens deliberately: a missing padding is a flag error, and
+    # discovering it after somebody has chosen a study and eight layers would
+    # throw away answers they had already given.
+    padding = _padding(args)
+
+    try:
+        answers = _ask(args, studies_root, cache_dir, local)
+    except (studies_mod.StudyError, catalog.CatalogError) as exc:
+        print(f"\n{exc}", file=sys.stderr)
+        return 2
+    if answers is None:
+        print("Cancelled; nothing was fetched, written or recorded.")
+        return 1
+    study, keys, preresolved = answers
+
     request = studyrun_mod.Request(
-        studies_root=(
-            Path(args.studies_root)
-            if args.studies_root
-            else studies_mod.default_studies_root()
-        ),
-        study=args.study,
-        datasets=catalog.resolve_keys(
-            ",".join(args.datasets) if args.datasets else None
-        ),
-        padding=_padding(args),
+        studies_root=studies_root,
+        study=study,
+        datasets=keys,
+        padding=padding,
         formats=_parse_formats(args.formats),
-        local_archives=_parse_local_archives(args.local_archive),
-        cache_dir=Path(args.cache_dir) if args.cache_dir else studies_mod.default_cache_dir(),
+        local_archives=local,
+        preresolved=preresolved,
+        cache_dir=cache_dir,
         output_crs=args.output_crs,
         resolution=args.resolution,
         whole_features=args.whole_features,
@@ -630,23 +725,41 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             "Build the box from a study's stations, extract the selected layers "
             "into <study>/marine-bios/, and record the run in the study's own "
-            "metadata. Every answer is a flag, so the command runs unattended."
+            "metadata. Every answer can be a flag, so the command runs "
+            "unattended; the answers you leave out are asked for on screen, and "
+            "with no terminal nothing is drawn."
         ),
         epilog=(
-            "Example:\n"
+            "Examples:\n"
             "  bios study --study latest --pad-km 10 --datasets mpa shoreline --yes\n"
+            "  bios study --pad-km 10          pick the study and the layers on screen\n"
             "\n"
             "The study can be named by id, by label, by any unique fragment of "
             "either, or as 'latest'. A fragment that matches more than one study "
-            "is an error listing them, never a silent pick of the newest."
+            "is an error listing them, never a silent pick of the newest.\n"
+            "\n"
+            "On a screen: up/down move, enter selects, space toggles a layer, a "
+            "selects every runnable layer, esc steps back one screen (and exits "
+            "from the first), q abandons the run."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     std.add_argument("--studies-root", type=Path, help="default ../studies")
     std.add_argument(
-        "--study", required=True, help="study id, label, unique fragment, or 'latest'"
+        "--study",
+        help=(
+            "study id, label, unique fragment, or 'latest'; omit to choose from "
+            "a list, which needs a terminal"
+        ),
     )
-    std.add_argument("--datasets", nargs="*", help="dataset keys; omit for all wired-up ones")
+    std.add_argument(
+        "--datasets",
+        nargs="*",
+        help=(
+            "dataset keys; omit to choose from a list, or pass it with no keys "
+            "for all wired-up ones (which is what omitting it does with no terminal)"
+        ),
+    )
     std.add_argument("--pad-km", type=float, help="margin for every side, in km")
     std.add_argument("--pad-north-km", type=float, help="overrides --pad-km on this side")
     std.add_argument("--pad-south-km", type=float, help="overrides --pad-km on this side")

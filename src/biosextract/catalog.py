@@ -76,6 +76,12 @@ reading the vector layers. So a `--dry-run` downloads the vector archives it
 would have used, and says so. `--no-expand` returns a dry run to step 1 and 2
 only.
 
+The dataset screen makes steps 1 and 2 earlier still - the moment you confirm a
+selection, so the archive sizes are on screen before anything is downloaded.
+Those results are handed to the run rather than thrown away, so it is still one
+listing and one HEAD per dataset per run, and stepping back into the screen and
+forward again costs nothing.
+
 The User-Agent identifies this tool and links to the BIOS programme. Set the
 BIOS_CONTACT environment variable to append your email address, which is the
 courteous thing to do if you run this often.
